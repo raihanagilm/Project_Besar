@@ -1,14 +1,18 @@
 import requests
 import json
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from ..config import GROQ_API_KEY, NVIDIA_API_KEY
 
 SYSTEM_EXTRACTOR_PROMPT = """Kamu adalah Jev Structural Engine.
 Tugasmu adalah menganalisis ide/pemikiran pengguna mengenai rencana besar, sistem, atau aplikasi, lalu mengubahnya menjadi AST (Abstract Syntax Tree) berformat JSON murni tanpa pembuka/penutup markdown.
 
+PENTING TENTANG UPDATE INKREMENTAL:
+Jika diberikan riwayat konteks sebelumnya atau diagram yang sudah ada, JANGAN membuang atau menghapus entitas lama kecuali secara eksplisit diminta oleh pengguna!
+TUGASMU ADALAH MENGGABUNGKAN (MERGE & ENRICH) ide baru ke dalam diagram yang sudah ada, memperluas tabel, menambah relasi baru, menambah node mindmap baru, atau use case baru.
+
 Format JSON yang DIHARUSKAN:
 {
-  "ringkasan_ide": "Ringkasan pemikiran pengguna",
+  "ringkasan_ide": "Ringkasan kumulatif seluruh sistem dan ide terbaru pengguna",
   "erd_tables": [
     {
       "nama_tabel": "nama_tabel_indonesia",
@@ -19,8 +23,7 @@ Format JSON yang DIHARUSKAN:
     }
   ],
   "mindmap_nodes": [
-    {"id": "tahap_1", "label": "Konsep Inti", "kategori": "fondasi", "sub_poin": ["Riset", "Validasi"]},
-    {"id": "tahap_2", "label": "Implementasi MVP", "kategori": "eksekusi", "sub_poin": ["Backend", "Frontend"]}
+    {"id": "tahap_1", "label": "Konsep Inti", "kategori": "fondasi", "sub_poin": ["Riset", "Validasi"]}
   ],
   "use_cases": [
     {
@@ -34,7 +37,7 @@ Format JSON yang DIHARUSKAN:
       "dari": "nama_tabel_atau_node",
       "ke": "target_tabel_atau_node",
       "tipe": "1-N",
-      "keterangan": "Relasi foreign key atau hierarki alur"
+      "keterangan": "Relasi foreign key atau alur sistem"
     }
   ]
 }
@@ -46,10 +49,22 @@ Aturan Ketat:
 4. Output HANYA JSON murni tanpa ```json ... ```.
 """
 
-def panggil_llm_ekstraksi(pesan_pengguna: str) -> Dict[str, Any]:
+def panggil_llm_ekstraksi(pesan_pengguna: str, riwayat_obrolan: Optional[List[str]] = None) -> Dict[str, Any]:
     """
-    Memanggil LLM (Groq dengan fallback ke Nvidia NIM) untuk ekstraksi struktur.
+    Memanggil LLM dengan menyertakan riwayat obrolan proyek agar diagram bersifat akumulatif (tidak hilang).
     """
+    messages = [{"role": "system", "content": SYSTEM_EXTRACTOR_PROMPT}]
+    
+    if riwayat_obrolan and len(riwayat_obrolan) > 0:
+        konteks = "Berikut adalah riwayat ide/rencana sebelumnya yang sudah ada di proyek ini:\n"
+        for idx, chat in enumerate(riwayat_obrolan):
+            konteks += f"- Ide {idx+1}: {chat}\n"
+        konteks += f"\nSekarang, pengguna menambahkan/memperbarui ide berikut: \"{pesan_pengguna}\"\n"
+        konteks += "Tolong hasilkan skema LENGKAP (gabungan seluruh ide sebelumnya + ide baru yang diperluas)."
+        messages.append({"role": "user", "content": konteks})
+    else:
+        messages.append({"role": "user", "content": pesan_pengguna})
+
     # 1. Coba via Groq
     if GROQ_API_KEY:
         try:
@@ -60,10 +75,7 @@ def panggil_llm_ekstraksi(pesan_pengguna: str) -> Dict[str, Any]:
             }
             payload = {
                 "model": "qwen/qwen3.8-27b",
-                "messages": [
-                    {"role": "system", "content": SYSTEM_EXTRACTOR_PROMPT},
-                    {"role": "user", "content": pesan_pengguna}
-                ],
+                "messages": messages,
                 "temperature": 0.2,
                 "response_format": {"type": "json_object"}
             }
@@ -84,16 +96,12 @@ def panggil_llm_ekstraksi(pesan_pengguna: str) -> Dict[str, Any]:
             }
             payload = {
                 "model": "moonshotai/kimi-k3",
-                "messages": [
-                    {"role": "system", "content": SYSTEM_EXTRACTOR_PROMPT},
-                    {"role": "user", "content": pesan_pengguna}
-                ],
+                "messages": messages,
                 "temperature": 0.2
             }
             resp = requests.post(url, headers=headers, json=payload, timeout=30)
             if resp.status_code == 200:
                 konten = resp.json()["choices"][0]["message"]["content"]
-                # Bersihkan potensi markdown backticks jika ada
                 konten_bersih = konten.strip()
                 if konten_bersih.startswith("```json"):
                     konten_bersih = konten_bersih[7:]

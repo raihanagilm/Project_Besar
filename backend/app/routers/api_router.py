@@ -93,29 +93,72 @@ def detail_rencana(rencana_id: str):
         "obrolan": obrolan
     }
 
+def simpan_node_dan_edge_internal(conn, rencana_id: str, nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]], waktu: str):
+    """Helper untuk otomatis meng-update node dan relasi di SQLite saat chat masuk"""
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM node_diagram WHERE rencana_id = ?;", (rencana_id,))
+    cursor.execute("DELETE FROM relasi_diagram WHERE rencana_id = ?;", (rencana_id,))
+    
+    for node in nodes:
+        node_id = node.get("id") or buat_id_terstruktur("nod")
+        pos = node.get("position", {})
+        cursor.execute(
+            """INSERT INTO node_diagram (node_id, rencana_id, tipe_node, label, posisi_x, posisi_y, data_json, dibuat_pada)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?);""",
+            (
+                node_id,
+                rencana_id,
+                node.get("type", "default"),
+                node.get("data", {}).get("label", node.get("data", {}).get("nama_tabel", "Node")),
+                pos.get("x", 0.0),
+                pos.get("y", 0.0),
+                json.dumps(node.get("data", {})),
+                waktu
+            )
+        )
+        
+    for edge in edges:
+        relasi_id = edge.get("id") or buat_id_terstruktur("rel")
+        cursor.execute(
+            """INSERT INTO relasi_diagram (relasi_id, rencana_id, node_asal_id, node_tujuan_id, label_relasi, tipe_garis, dibuat_pada)
+               VALUES (?, ?, ?, ?, ?, ?, ?);""",
+            (
+                relasi_id,
+                rencana_id,
+                edge.get("source"),
+                edge.get("target"),
+                edge.get("label", ""),
+                "smoothstep",
+                waktu
+            )
+        )
+
 @router.post("/chat/translate-ide")
 def translate_ide_dengan_jev(dto: ChatInputDTO):
     """
     Core Jev Pipeline:
-    Menerima pemikiran pengguna -> LLM Ekstraksi -> Jev Deterministic Verifier -> Persistensi lokal
+    Menerima pemikiran pengguna -> LLM Ekstraksi Kumulatif -> Jev Deterministic Verifier -> Otomatis Simpan ke SQLite
     """
     rencana_id = dto.rencana_id
     waktu_skrg = datetime.now().isoformat()
     
-    # Pastikan proyek rencana memang ada
+    # Ambil riwayat chat sebelumnya agar diagram bertambah (inkremental)
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM rencana WHERE rencana_id = ?;", (rencana_id,))
         if not cursor.fetchone():
             raise HTTPException(status_code=404, detail="Proyek rencana tidak ditemukan")
+        
+        cursor.execute("SELECT pesan_mentah FROM sesi_obrolan WHERE rencana_id = ? ORDER BY dibuat_pada ASC;", (rencana_id,))
+        riwayat_pesan = [r["pesan_mentah"] for r in cursor.fetchall()]
 
-    # 1. Panggil LLM Gateway untuk merumuskan AST
-    raw_ast = panggil_llm_ekstraksi(dto.pesan)
+    # 1. Panggil LLM Gateway dengan konteks akumulatif
+    raw_ast = panggil_llm_ekstraksi(dto.pesan, riwayat_obrolan=riwayat_pesan)
 
     # 2. Eksekusi Jev Deterministic Verifier
     is_valid, log_verifikasi, hasil_terstruktur = verifier.verifikasi_dan_eksekusi(raw_ast)
 
-    # 3. Simpan pesan chat baru ke sesi_obrolan
+    # 3. Simpan pesan chat baru dan LANGSUNG OTOMATIS simpan nodes/edges ke SQLite
     sesi_id = buat_id_terstruktur("ses")
     with get_db_connection() as conn:
         cursor = conn.cursor()
@@ -123,6 +166,12 @@ def translate_ide_dengan_jev(dto: ChatInputDTO):
             "INSERT INTO sesi_obrolan (sesi_id, rencana_id, peran, pesan_mentah, hasil_verifikasi_json, dibuat_pada) VALUES (?, ?, ?, ?, ?, ?);",
             (sesi_id, rencana_id, "pengguna", dto.pesan, json.dumps(log_verifikasi), waktu_skrg)
         )
+        
+        # Otomatis simpan diagram hasil verifikasi terkini ke basis data
+        nodes = hasil_terstruktur.get("nodes", [])
+        edges = hasil_terstruktur.get("edges", [])
+        simpan_node_dan_edge_internal(conn, rencana_id, nodes, edges, waktu_skrg)
+        
         conn.commit()
 
     return {
@@ -136,10 +185,9 @@ def translate_ide_dengan_jev(dto: ChatInputDTO):
 @router.put("/chat/edit")
 def edit_chat_dan_reverifikasi(dto: EditChatDTO):
     """
-    Mengedit pesan chat sebelumnya dan memicu ulang verifikasi Jev
+    Mengedit pesan chat sebelumnya, memicu ulang verifikasi kumulatif Jev, dan otomatis meng-update canvas
     """
     waktu_skrg = datetime.now().isoformat()
-    # 1. Perbarui teks pesan di SQLite
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(
@@ -150,11 +198,20 @@ def edit_chat_dan_reverifikasi(dto: EditChatDTO):
         if not row:
             raise HTTPException(status_code=404, detail="Pesan obrolan tidak ditemukan")
 
-    # 2. Panggil LLM dan Jev verifier ulang
-    raw_ast = panggil_llm_ekstraksi(dto.pesan_baru)
+        # Ambil semua pesan chat lain dalam proyek ini sebagai konteks
+        cursor.execute("SELECT sesi_id, pesan_mentah FROM sesi_obrolan WHERE rencana_id = ? ORDER BY dibuat_pada ASC;", (dto.rencana_id,))
+        semua_chat = []
+        for r in cursor.fetchall():
+            if r["sesi_id"] == dto.sesi_id:
+                semua_chat.append(dto.pesan_baru)
+            else:
+                semua_chat.append(r["pesan_mentah"])
+
+    # 2. Panggil LLM dengan konteks terbaru
+    raw_ast = panggil_llm_ekstraksi(dto.pesan_baru, riwayat_obrolan=semua_chat[:-1])
     is_valid, log_verifikasi, hasil_terstruktur = verifier.verifikasi_dan_eksekusi(raw_ast)
 
-    # 3. Update sesi_obrolan
+    # 3. Update sesi_obrolan dan otomatis update diagram
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(
@@ -163,6 +220,9 @@ def edit_chat_dan_reverifikasi(dto: EditChatDTO):
                WHERE sesi_id = ? AND rencana_id = ?;""",
             (dto.pesan_baru, json.dumps(log_verifikasi), waktu_skrg, dto.sesi_id, dto.rencana_id)
         )
+        nodes = hasil_terstruktur.get("nodes", [])
+        edges = hasil_terstruktur.get("edges", [])
+        simpan_node_dan_edge_internal(conn, dto.rencana_id, nodes, edges, waktu_skrg)
         conn.commit()
 
     return {
@@ -178,47 +238,7 @@ def simpan_posisi_canvas(dto: SimpanNodeDTO):
     """Menyimpan posisi node dan relasi terkini hasil drag pengguna di React Flow"""
     waktu_skrg = datetime.now().isoformat()
     with get_db_connection() as conn:
-        cursor = conn.cursor()
-        
-        # Hapus data node lama untuk rencana ini
-        cursor.execute("DELETE FROM node_diagram WHERE rencana_id = ?;", (dto.rencana_id,))
-        cursor.execute("DELETE FROM relasi_diagram WHERE rencana_id = ?;", (dto.rencana_id,))
-        
-        # Masukkan nodes
-        for node in dto.nodes:
-            node_id = node.get("id") or buat_id_terstruktur("nod")
-            pos = node.get("position", {})
-            cursor.execute(
-                """INSERT INTO node_diagram (node_id, rencana_id, tipe_node, label, posisi_x, posisi_y, data_json, dibuat_pada)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?);""",
-                (
-                    node_id,
-                    dto.rencana_id,
-                    node.get("type", "default"),
-                    node.get("data", {}).get("label", node.get("data", {}).get("nama_tabel", "Node")),
-                    pos.get("x", 0.0),
-                    pos.get("y", 0.0),
-                    json.dumps(node.get("data", {})),
-                    waktu_skrg
-                )
-            )
-            
-        # Masukkan edges
-        for edge in dto.edges:
-            relasi_id = edge.get("id") or buat_id_terstruktur("rel")
-            cursor.execute(
-                """INSERT INTO relasi_diagram (relasi_id, rencana_id, node_asal_id, node_tujuan_id, label_relasi, tipe_garis, dibuat_pada)
-                   VALUES (?, ?, ?, ?, ?, ?, ?);""",
-                (
-                    relasi_id,
-                    dto.rencana_id,
-                    edge.get("source"),
-                    edge.get("target"),
-                    edge.get("label", ""),
-                    "smoothstep",
-                    waktu_skrg
-                )
-            )
+        simpan_node_dan_edge_internal(conn, dto.rencana_id, dto.nodes, dto.edges, waktu_skrg)
         conn.commit()
         
     return {"status": "sukses", "pesan": "Canvas tersimpan di SQLite lokal"}

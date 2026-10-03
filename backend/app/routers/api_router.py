@@ -93,15 +93,84 @@ def detail_rencana(rencana_id: str):
         "obrolan": obrolan
     }
 
+def ambil_state_diagram_internal(conn, rencana_id: str) -> Dict[str, Any]:
+    """Mengambil representasi terstruktur dari diagram yang sudah ada di database saat ini"""
+    cursor = conn.cursor()
+    cursor.execute("SELECT tipe_node, data_json FROM node_diagram WHERE rencana_id = ?;", (rencana_id,))
+    nodes = cursor.fetchall()
+    
+    tabel_list = []
+    mindmap_list = []
+    usecase_list = []
+    
+    for n in nodes:
+        tipe = n["tipe_node"]
+        try:
+            d = json.loads(n["data_json"])
+        except Exception:
+            d = {}
+            
+        if tipe == "erdNode":
+            tabel_list.append({
+                "nama_tabel": d.get("nama_tabel"),
+                "kolom": d.get("kolom", [])
+            })
+        elif tipe == "mindmapNode":
+            mindmap_list.append({
+                "label": d.get("label"),
+                "kategori": d.get("kategori"),
+                "sub_poin": d.get("sub_poin", [])
+            })
+        elif tipe == "useCaseNode":
+            usecase_list.append({
+                "aktor": d.get("aktor"),
+                "kasus": d.get("kasus"),
+                "deskripsi": d.get("deskripsi")
+            })
+
+    cursor.execute("SELECT node_asal_id, node_tujuan_id, label_relasi FROM relasi_diagram WHERE rencana_id = ?;", (rencana_id,))
+    relasi_list = [{"dari": r["node_asal_id"], "ke": r["node_tujuan_id"], "label": r["label_relasi"]} for r in cursor.fetchall()]
+
+    return {
+        "tabel": tabel_list,
+        "mindmap": mindmap_list,
+        "usecase": usecase_list,
+        "relasi": relasi_list
+    }
+
 def simpan_node_dan_edge_internal(conn, rencana_id: str, nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]], waktu: str):
     """Helper untuk otomatis meng-update node dan relasi di SQLite saat chat masuk"""
     cursor = conn.cursor()
+    
+    # Ambil posisi lama dan warna kustom jika ada, agar pergeseran manual pengguna tidak hilang
+    cursor.execute("SELECT node_id, posisi_x, posisi_y, data_json FROM node_diagram WHERE rencana_id = ?;", (rencana_id,))
+    existing_map = {}
+    for r in cursor.fetchall():
+        try:
+            d_json = json.loads(r["data_json"])
+        except Exception:
+            d_json = {}
+        existing_map[r["node_id"]] = {
+            "x": r["posisi_x"],
+            "y": r["posisi_y"],
+            "warna_kustom": d_json.get("warna_kustom")
+        }
+
     cursor.execute("DELETE FROM node_diagram WHERE rencana_id = ?;", (rencana_id,))
     cursor.execute("DELETE FROM relasi_diagram WHERE rencana_id = ?;", (rencana_id,))
     
     for node in nodes:
         node_id = node.get("id") or buat_id_terstruktur("nod")
         pos = node.get("position", {})
+        node_data = node.get("data", {})
+
+        # Jika node ini sebelumnya sudah pernah ada dan posisinya pernah disetel manual, pertahankan posisinya
+        if node_id in existing_map:
+            pos["x"] = existing_map[node_id]["x"]
+            pos["y"] = existing_map[node_id]["y"]
+            if existing_map[node_id].get("warna_kustom"):
+                node_data["warna_kustom"] = existing_map[node_id]["warna_kustom"]
+
         cursor.execute(
             """INSERT INTO node_diagram (node_id, rencana_id, tipe_node, label, posisi_x, posisi_y, data_json, dibuat_pada)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?);""",
@@ -109,10 +178,10 @@ def simpan_node_dan_edge_internal(conn, rencana_id: str, nodes: List[Dict[str, A
                 node_id,
                 rencana_id,
                 node.get("type", "default"),
-                node.get("data", {}).get("label", node.get("data", {}).get("nama_tabel", "Node")),
+                node_data.get("label", node_data.get("nama_tabel", "Node")),
                 pos.get("x", 0.0),
                 pos.get("y", 0.0),
-                json.dumps(node.get("data", {})),
+                json.dumps(node_data),
                 waktu
             )
         )
@@ -137,8 +206,7 @@ def simpan_node_dan_edge_internal(conn, rencana_id: str, nodes: List[Dict[str, A
 def translate_ide_dengan_jev(dto: ChatInputDTO):
     """
     Core Jev Pipeline:
-    - Mode Fast: Langsung ekstraksi AST -> verifikasi Jev -> otomatis update kanvas.
-    - Mode Thinking: Analisis mendalam & hasilkan kartu rekomendasi opsi tanpa mengubah kanvas sebelum user memilih.
+    Membaca STATE DIAGRAM SAAT INI + RIWAYAT CHAT agar tidak membuat ulang secara sembarangan.
     """
     rencana_id = dto.rencana_id
     waktu_skrg = datetime.now().isoformat()
@@ -151,13 +219,19 @@ def translate_ide_dengan_jev(dto: ChatInputDTO):
         
         cursor.execute("SELECT pesan_mentah FROM sesi_obrolan WHERE rencana_id = ? ORDER BY dibuat_pada ASC;", (rencana_id,))
         riwayat_pesan = [r["pesan_mentah"] for r in cursor.fetchall()]
+        
+        state_diagram_saat_ini = ambil_state_diagram_internal(conn, rencana_id)
 
     mode = dto.mode or "fast"
     sesi_id = buat_id_terstruktur("ses")
 
     # JIKA MODE THINKING:
     if mode == "thinking":
-        hasil_thinking = panggil_llm_thinking(dto.pesan, riwayat_obrolan=riwayat_pesan)
+        hasil_thinking = panggil_llm_thinking(
+            dto.pesan,
+            riwayat_obrolan=riwayat_pesan,
+            state_diagram_saat_ini=state_diagram_saat_ini
+        )
         payload_simpan = {
             "mode": "thinking",
             "hasil_thinking": hasil_thinking
@@ -176,12 +250,16 @@ def translate_ide_dengan_jev(dto: ChatInputDTO):
             "mode": "thinking",
             "hasil_thinking": hasil_thinking,
             "is_valid": True,
-            "log_verifikasi": ["[Jev Advisor] Analisa thinking selesai. Menampilkan opsi rekomendasi."],
+            "log_verifikasi": ["[Jev Advisor] Analisa thinking selesai berbasis data diagram terkini."],
             "hasil_terstruktur": None
         }
 
     # JIKA MODE FAST:
-    raw_ast = panggil_llm_ekstraksi(dto.pesan, riwayat_obrolan=riwayat_pesan)
+    raw_ast = panggil_llm_ekstraksi(
+        dto.pesan,
+        riwayat_obrolan=riwayat_pesan,
+        state_diagram_saat_ini=state_diagram_saat_ini
+    )
     is_valid, log_verifikasi, hasil_terstruktur = verifier.verifikasi_dan_eksekusi(raw_ast)
 
     with get_db_connection() as conn:
@@ -207,7 +285,7 @@ def translate_ide_dengan_jev(dto: ChatInputDTO):
 @router.put("/chat/edit")
 def edit_chat_dan_reverifikasi(dto: EditChatDTO):
     """
-    Mengedit pesan chat sebelumnya dan memicu ulang verifikasi
+    Mengedit pesan chat sebelumnya dan memicu ulang verifikasi dengan tetap membaca state diagram
     """
     waktu_skrg = datetime.now().isoformat()
     with get_db_connection() as conn:
@@ -227,10 +305,16 @@ def edit_chat_dan_reverifikasi(dto: EditChatDTO):
                 semua_chat.append(dto.pesan_baru)
             else:
                 semua_chat.append(r["pesan_mentah"])
+                
+        state_diagram_saat_ini = ambil_state_diagram_internal(conn, dto.rencana_id)
 
     mode = dto.mode or "fast"
     if mode == "thinking":
-        hasil_thinking = panggil_llm_thinking(dto.pesan_baru, riwayat_obrolan=semua_chat[:-1])
+        hasil_thinking = panggil_llm_thinking(
+            dto.pesan_baru,
+            riwayat_obrolan=semua_chat[:-1],
+            state_diagram_saat_ini=state_diagram_saat_ini
+        )
         payload_simpan = {"mode": "thinking", "hasil_thinking": hasil_thinking}
         with get_db_connection() as conn:
             cursor = conn.cursor()
@@ -251,7 +335,11 @@ def edit_chat_dan_reverifikasi(dto: EditChatDTO):
             "hasil_terstruktur": None
         }
 
-    raw_ast = panggil_llm_ekstraksi(dto.pesan_baru, riwayat_obrolan=semua_chat[:-1])
+    raw_ast = panggil_llm_ekstraksi(
+        dto.pesan_baru,
+        riwayat_obrolan=semua_chat[:-1],
+        state_diagram_saat_ini=state_diagram_saat_ini
+    )
     is_valid, log_verifikasi, hasil_terstruktur = verifier.verifikasi_dan_eksekusi(raw_ast)
 
     with get_db_connection() as conn:

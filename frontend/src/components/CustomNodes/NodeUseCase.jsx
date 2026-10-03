@@ -4,11 +4,15 @@ import { UserCheck } from 'lucide-react';
 import { tokens } from '../../tokens/design_tokens';
 
 export const NodeUseCase = memo(({ data }) => {
+  const cardColor = data.warna_kustom ? `${data.warna_kustom}22` : tokens.warna.kartu;
+  const borderColor = data.warna_kustom || tokens.warna.garis_batas;
+  const accentColor = data.warna_kustom || tokens.warna.status.sukses;
+
   return (
     <div
       style={{
-        backgroundColor: tokens.warna.kartu,
-        border: `1px solid ${tokens.warna.garis_batas}`,
+        backgroundColor: cardColor,
+        border: `1px solid ${borderColor}`,
         borderRadius: tokens.radius.md,
         padding: tokens.spasi.md,
         width: '240px',
@@ -16,11 +20,11 @@ export const NodeUseCase = memo(({ data }) => {
         color: tokens.warna.teks.utama,
       }}
     >
-      <Handle type="target" position={Position.Top} style={{ background: tokens.warna.status.sukses }} />
+      <Handle type="target" position={Position.Top} style={{ background: accentColor }} />
 
       <div style={{ display: 'flex', alignItems: 'center', gap: tokens.spasi.sm, marginBottom: tokens.spasi.xs }}>
-        <UserCheck size={16} color={tokens.warna.status.sukses} />
-        <span style={{ fontSize: '11px', fontWeight: 600, color: tokens.warna.status.sukses, textTransform: 'uppercase' }}>
+        <UserCheck size={16} color={accentColor} />
+        <span style={{ fontSize: '11px', fontWeight: 600, color: accentColor, textTransform: 'uppercase' }}>
           {data.aktor || 'Aktor'}
         </span>
       </div>
@@ -35,7 +39,7 @@ export const NodeUseCase = memo(({ data }) => {
         </div>
       )}
 
-      <Handle type="source" position={Position.Bottom} style={{ background: tokens.warna.status.sukses }} />
+      <Handle type="source" position={Position.Bottom} style={{ background: accentColor }} />
     </div>
   );
 });

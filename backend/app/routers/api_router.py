@@ -6,7 +6,7 @@ import json
 from ..database import get_db_connection
 from ..utils.id_generator import buat_id_terstruktur
 from ..models.schemas import RencanaBuatDTO, ChatInputDTO, EditChatDTO, SimpanNodeDTO
-from ..services.llm_gateway import panggil_llm_ekstraksi
+from ..services.llm_gateway import panggil_llm_ekstraksi, panggil_llm_thinking
 from ..services.jev_verifier import JevVerifierEngine
 
 router = APIRouter(prefix="/api", tags=["Rencana & Jev Reasoning"])
@@ -137,12 +137,12 @@ def simpan_node_dan_edge_internal(conn, rencana_id: str, nodes: List[Dict[str, A
 def translate_ide_dengan_jev(dto: ChatInputDTO):
     """
     Core Jev Pipeline:
-    Menerima pemikiran pengguna -> LLM Ekstraksi Kumulatif -> Jev Deterministic Verifier -> Otomatis Simpan ke SQLite
+    - Mode Fast: Langsung ekstraksi AST -> verifikasi Jev -> otomatis update kanvas.
+    - Mode Thinking: Analisis mendalam & hasilkan kartu rekomendasi opsi tanpa mengubah kanvas sebelum user memilih.
     """
     rencana_id = dto.rencana_id
     waktu_skrg = datetime.now().isoformat()
     
-    # Ambil riwayat chat sebelumnya agar diagram bertambah (inkremental)
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM rencana WHERE rencana_id = ?;", (rencana_id,))
@@ -152,31 +152,53 @@ def translate_ide_dengan_jev(dto: ChatInputDTO):
         cursor.execute("SELECT pesan_mentah FROM sesi_obrolan WHERE rencana_id = ? ORDER BY dibuat_pada ASC;", (rencana_id,))
         riwayat_pesan = [r["pesan_mentah"] for r in cursor.fetchall()]
 
-    # 1. Panggil LLM Gateway dengan konteks akumulatif
-    raw_ast = panggil_llm_ekstraksi(dto.pesan, riwayat_obrolan=riwayat_pesan)
+    mode = dto.mode or "fast"
+    sesi_id = buat_id_terstruktur("ses")
 
-    # 2. Eksekusi Jev Deterministic Verifier
+    # JIKA MODE THINKING:
+    if mode == "thinking":
+        hasil_thinking = panggil_llm_thinking(dto.pesan, riwayat_obrolan=riwayat_pesan)
+        payload_simpan = {
+            "mode": "thinking",
+            "hasil_thinking": hasil_thinking
+        }
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO sesi_obrolan (sesi_id, rencana_id, peran, pesan_mentah, hasil_verifikasi_json, dibuat_pada) VALUES (?, ?, ?, ?, ?, ?);",
+                (sesi_id, rencana_id, "pengguna", dto.pesan, json.dumps(payload_simpan), waktu_skrg)
+            )
+            conn.commit()
+            
+        return {
+            "sesi_id": sesi_id,
+            "rencana_id": rencana_id,
+            "mode": "thinking",
+            "hasil_thinking": hasil_thinking,
+            "is_valid": True,
+            "log_verifikasi": ["[Jev Advisor] Analisa thinking selesai. Menampilkan opsi rekomendasi."],
+            "hasil_terstruktur": None
+        }
+
+    # JIKA MODE FAST:
+    raw_ast = panggil_llm_ekstraksi(dto.pesan, riwayat_obrolan=riwayat_pesan)
     is_valid, log_verifikasi, hasil_terstruktur = verifier.verifikasi_dan_eksekusi(raw_ast)
 
-    # 3. Simpan pesan chat baru dan LANGSUNG OTOMATIS simpan nodes/edges ke SQLite
-    sesi_id = buat_id_terstruktur("ses")
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(
             "INSERT INTO sesi_obrolan (sesi_id, rencana_id, peran, pesan_mentah, hasil_verifikasi_json, dibuat_pada) VALUES (?, ?, ?, ?, ?, ?);",
             (sesi_id, rencana_id, "pengguna", dto.pesan, json.dumps(log_verifikasi), waktu_skrg)
         )
-        
-        # Otomatis simpan diagram hasil verifikasi terkini ke basis data
         nodes = hasil_terstruktur.get("nodes", [])
         edges = hasil_terstruktur.get("edges", [])
         simpan_node_dan_edge_internal(conn, rencana_id, nodes, edges, waktu_skrg)
-        
         conn.commit()
 
     return {
         "sesi_id": sesi_id,
         "rencana_id": rencana_id,
+        "mode": "fast",
         "is_valid": is_valid,
         "log_verifikasi": log_verifikasi,
         "hasil_terstruktur": hasil_terstruktur
@@ -185,7 +207,7 @@ def translate_ide_dengan_jev(dto: ChatInputDTO):
 @router.put("/chat/edit")
 def edit_chat_dan_reverifikasi(dto: EditChatDTO):
     """
-    Mengedit pesan chat sebelumnya, memicu ulang verifikasi kumulatif Jev, dan otomatis meng-update canvas
+    Mengedit pesan chat sebelumnya dan memicu ulang verifikasi
     """
     waktu_skrg = datetime.now().isoformat()
     with get_db_connection() as conn:
@@ -198,7 +220,6 @@ def edit_chat_dan_reverifikasi(dto: EditChatDTO):
         if not row:
             raise HTTPException(status_code=404, detail="Pesan obrolan tidak ditemukan")
 
-        # Ambil semua pesan chat lain dalam proyek ini sebagai konteks
         cursor.execute("SELECT sesi_id, pesan_mentah FROM sesi_obrolan WHERE rencana_id = ? ORDER BY dibuat_pada ASC;", (dto.rencana_id,))
         semua_chat = []
         for r in cursor.fetchall():
@@ -207,11 +228,32 @@ def edit_chat_dan_reverifikasi(dto: EditChatDTO):
             else:
                 semua_chat.append(r["pesan_mentah"])
 
-    # 2. Panggil LLM dengan konteks terbaru
+    mode = dto.mode or "fast"
+    if mode == "thinking":
+        hasil_thinking = panggil_llm_thinking(dto.pesan_baru, riwayat_obrolan=semua_chat[:-1])
+        payload_simpan = {"mode": "thinking", "hasil_thinking": hasil_thinking}
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """UPDATE sesi_obrolan 
+                   SET pesan_mentah = ?, hasil_verifikasi_json = ?, dibuat_pada = ?
+                   WHERE sesi_id = ? AND rencana_id = ?;""",
+                (dto.pesan_baru, json.dumps(payload_simpan), waktu_skrg, dto.sesi_id, dto.rencana_id)
+            )
+            conn.commit()
+        return {
+            "sesi_id": dto.sesi_id,
+            "rencana_id": dto.rencana_id,
+            "mode": "thinking",
+            "hasil_thinking": hasil_thinking,
+            "is_valid": True,
+            "log_verifikasi": ["[Jev Advisor] Analisa thinking diperbarui."],
+            "hasil_terstruktur": None
+        }
+
     raw_ast = panggil_llm_ekstraksi(dto.pesan_baru, riwayat_obrolan=semua_chat[:-1])
     is_valid, log_verifikasi, hasil_terstruktur = verifier.verifikasi_dan_eksekusi(raw_ast)
 
-    # 3. Update sesi_obrolan dan otomatis update diagram
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(
@@ -228,6 +270,7 @@ def edit_chat_dan_reverifikasi(dto: EditChatDTO):
     return {
         "sesi_id": dto.sesi_id,
         "rencana_id": dto.rencana_id,
+        "mode": "fast",
         "is_valid": is_valid,
         "log_verifikasi": log_verifikasi,
         "hasil_terstruktur": hasil_terstruktur

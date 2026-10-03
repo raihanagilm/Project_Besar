@@ -14,7 +14,7 @@ const BACKEND_URL = 'http://localhost:8000/api';
 
 /**
  * App (FE-01: Main Content Render Order)
- * Mengatur proyek rencana aktif, state diagram, undo/redo history, dan integrasi backend
+ * Mengatur proyek rencana aktif, state diagram, undo/redo history, mode chat, dan operasi kanvas manual
  */
 export default function App() {
   const [daftarProyek, setDaftarProyek] = useState([]);
@@ -29,6 +29,7 @@ export default function App() {
   const [sedangMemproses, setSedangMemproses] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [filterMode, setFilterMode] = useState('semua');
+  const [modeChat, setModeChat] = useState('fast'); // 'fast' atau 'thinking'
 
   // History State untuk Undo / Redo
   const [riwayatUndo, setRiwayatUndo] = useState([]);
@@ -44,7 +45,6 @@ export default function App() {
         if (data.length === 0) {
           setIsModalOpen(true);
         } else if (!proyekAktif) {
-          // Buka proyek pertama secara default
           pilihProyek(data[0].rencana_id);
         }
       }
@@ -70,7 +70,6 @@ export default function App() {
         setRiwayatUndo([]);
         setRiwayatRedo([]);
         
-        // Ambil log verifikasi terakhir jika ada
         if (data.obrolan && data.obrolan.length > 0) {
           const obrolanTerakhir = data.obrolan[data.obrolan.length - 1];
           setLogVerifikasi(obrolanTerakhir.hasil_verifikasi || []);
@@ -105,13 +104,12 @@ export default function App() {
   // Rekam snapshot kanvas untuk Undo
   const catatSnapshot = useCallback(() => {
     setRiwayatUndo((prev) => [...prev, { nodes, edges }]);
-    setRiwayatRedo([]); // Reset redo jika ada perubahan baru
+    setRiwayatRedo([]);
   }, [nodes, edges]);
 
   // Handler Perubahan Posisi Node
   const onNodesChange = useCallback(
     (changes) => {
-      // Catat snapshot saat user selesai drag node
       const isDragStop = changes.some((c) => c.type === 'position' && c.dragging === false);
       if (isDragStop) {
         catatSnapshot();
@@ -129,7 +127,7 @@ export default function App() {
   const onConnect = useCallback(
     (connection) => {
       catatSnapshot();
-      setEdges((eds) => addEdge(connection, eds));
+      setEdges((eds) => addEdge({ ...connection, animated: true, style: { stroke: '#4f46e5', strokeWidth: 2 } }, eds));
     },
     [catatSnapshot]
   );
@@ -171,7 +169,77 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleUndo, handleRedo]);
 
-  // Mengirim Ide Baru ke Backend Jev
+  // Operasi Tambah Node Manual via Klik Kanan
+  const handleTambahNodeManual = (tipe, x, y) => {
+    catatSnapshot();
+    const timestampId = `nod_${Date.now()}`;
+    let dataBaru = {};
+
+    if (tipe === 'erdNode') {
+      const namaTabel = prompt('Masukkan nama tabel (bahasa Indonesia):', 'tabel_baru');
+      if (!namaTabel) return;
+      dataBaru = {
+        nama_tabel: namaTabel.trim().toLowerCase(),
+        kolom: [
+          { nama: `${namaTabel.trim().toLowerCase()}_id`, tipe: 'TEXT', is_pk: true },
+          { nama: 'nama', tipe: 'TEXT', is_pk: false }
+        ]
+      };
+    } else if (tipe === 'mindmapNode') {
+      const label = prompt('Masukkan judul konsep mindmap:', 'Gagasan Baru');
+      if (!label) return;
+      dataBaru = {
+        label: label.trim(),
+        kategori: 'konsep',
+        sub_poin: ['Poin 1', 'Poin 2']
+      };
+    } else if (tipe === 'useCaseNode') {
+      const aksi = prompt('Masukkan nama kasus use case:', 'Melakukan Aksi');
+      if (!aksi) return;
+      dataBaru = {
+        aktor: 'Pengguna',
+        kasus: aksi.trim(),
+        deskripsi: 'Deskripsi alur penggunaan'
+      };
+    }
+
+    const nodeBaru = {
+      id: timestampId,
+      type: tipe,
+      position: { x: x - 450, y: y - 50 }, // penyesuaian offset kanvas
+      data: dataBaru
+    };
+
+    setNodes((prev) => [...prev, nodeBaru]);
+  };
+
+  // Ubah Warna Node Manual
+  const handleUbahWarnaNode = (nodeId, hexWarna) => {
+    catatSnapshot();
+    setNodes((nds) =>
+      nds.map((n) => {
+        if (n.id === nodeId) {
+          return {
+            ...n,
+            data: {
+              ...n.data,
+              warna_kustom: hexWarna
+            }
+          };
+        }
+        return n;
+      })
+    );
+  };
+
+  // Hapus Node Manual
+  const handleHapusNode = (nodeId) => {
+    catatSnapshot();
+    setNodes((nds) => nds.filter((n) => n.id !== nodeId));
+    setEdges((eds) => eds.filter((e) => e.source !== nodeId && e.target !== nodeId));
+  };
+
+  // Mengirim Ide Baru ke Backend Jev (Fast vs Thinking)
   const handleKirimIde = async (pesan) => {
     if (!proyekAktif) {
       setIsModalOpen(true);
@@ -188,6 +256,7 @@ export default function App() {
         body: JSON.stringify({
           rencana_id: proyekAktif.rencana_id,
           pesan: pesan,
+          mode: modeChat,
         }),
       });
 
@@ -197,27 +266,44 @@ export default function App() {
 
       const data = await resp.json();
       setLogVerifikasi(data.log_verifikasi || []);
-      setRingkasanIde(data.hasil_terstruktur?.ringkasan_ide || '');
 
-      // Tambahkan ke daftar obrolan lokal
-      setDaftarObrolan((prev) => [
-        ...prev,
-        {
-          sesi_id: data.sesi_id,
-          rencana_id: proyekAktif.rencana_id,
-          peran: 'pengguna',
-          pesan_mentah: pesan,
-          hasil_verifikasi: data.log_verifikasi,
-          dibuat_pada: new Date().toISOString(),
-        },
-      ]);
+      if (data.mode === 'thinking') {
+        // Catat pesan mode thinking
+        setDaftarObrolan((prev) => [
+          ...prev,
+          {
+            sesi_id: data.sesi_id,
+            rencana_id: proyekAktif.rencana_id,
+            peran: 'pengguna',
+            pesan_mentah: pesan,
+            hasil_verifikasi: {
+              mode: 'thinking',
+              hasil_thinking: data.hasil_thinking
+            },
+            dibuat_pada: new Date().toISOString(),
+          },
+        ]);
+      } else {
+        // Mode Fast: update diagram langsung
+        setRingkasanIde(data.hasil_terstruktur?.ringkasan_ide || '');
+        setDaftarObrolan((prev) => [
+          ...prev,
+          {
+            sesi_id: data.sesi_id,
+            rencana_id: proyekAktif.rencana_id,
+            peran: 'pengguna',
+            pesan_mentah: pesan,
+            hasil_verifikasi: data.log_verifikasi,
+            dibuat_pada: new Date().toISOString(),
+          },
+        ]);
 
-      // Update node & edge hasil verifikasi Jev
-      if (data.hasil_terstruktur?.nodes && data.hasil_terstruktur.nodes.length > 0) {
-        setNodes(data.hasil_terstruktur.nodes);
-      }
-      if (data.hasil_terstruktur?.edges) {
-        setEdges(data.hasil_terstruktur.edges);
+        if (data.hasil_terstruktur?.nodes && data.hasil_terstruktur.nodes.length > 0) {
+          setNodes(data.hasil_terstruktur.nodes);
+        }
+        if (data.hasil_terstruktur?.edges) {
+          setEdges(data.hasil_terstruktur.edges);
+        }
       }
     } catch (err) {
       console.error('Gagal memproses ide:', err);
@@ -230,7 +316,14 @@ export default function App() {
     }
   };
 
-  // Mengedit Pesan Sebelumnya dan Menjalankan Re-Verifikasi
+  // Menerapkan Opsi dari Hasil Diskusi Thinking Mode
+  const handleTerapkanOpsi = (instruksiOpsi) => {
+    // Jalankan dalam mode fast untuk langsung merefleksikan ke diagram kanvas
+    setModeChat('fast');
+    handleKirimIde(`Terapkan arsitektur berikut ke diagram: ${instruksiOpsi}`);
+  };
+
+  // Mengedit Pesan Sebelumnya
   const handleEditPesan = async (sesiId, pesanBaru) => {
     if (!proyekAktif) return;
     setSedangMemproses(true);
@@ -244,6 +337,7 @@ export default function App() {
           sesi_id: sesiId,
           rencana_id: proyekAktif.rencana_id,
           pesan_baru: pesanBaru,
+          mode: modeChat,
         }),
       });
 
@@ -253,23 +347,28 @@ export default function App() {
 
       const data = await resp.json();
       setLogVerifikasi(data.log_verifikasi || []);
-      setRingkasanIde(data.hasil_terstruktur?.ringkasan_ide || '');
 
-      // Perbarui state daftar obrolan
+      if (data.mode !== 'thinking') {
+        setRingkasanIde(data.hasil_terstruktur?.ringkasan_ide || '');
+        if (data.hasil_terstruktur?.nodes && data.hasil_terstruktur.nodes.length > 0) {
+          setNodes(data.hasil_terstruktur.nodes);
+        }
+        if (data.hasil_terstruktur?.edges) {
+          setEdges(data.hasil_terstruktur.edges);
+        }
+      }
+
       setDaftarObrolan((prev) =>
         prev.map((item) =>
           item.sesi_id === sesiId
-            ? { ...item, pesan_mentah: pesanBaru, hasil_verifikasi: data.log_verifikasi }
+            ? {
+                ...item,
+                pesan_mentah: pesanBaru,
+                hasil_verifikasi: data.mode === 'thinking' ? { mode: 'thinking', hasil_thinking: data.hasil_thinking } : data.log_verifikasi
+              }
             : item
         )
       );
-
-      if (data.hasil_terstruktur?.nodes && data.hasil_terstruktur.nodes.length > 0) {
-        setNodes(data.hasil_terstruktur.nodes);
-      }
-      if (data.hasil_terstruktur?.edges) {
-        setEdges(data.hasil_terstruktur.edges);
-      }
     } catch (err) {
       console.error('Gagal mengedit chat:', err);
     } finally {
@@ -326,9 +425,12 @@ export default function App() {
         ringkasanIde={ringkasanIde}
         namaProyek={proyekAktif?.judul}
         onBukaGantiProyek={() => setIsModalOpen(true)}
+        modeChat={modeChat}
+        setModeChat={setModeChat}
+        onTerapkanOpsi={handleTerapkanOpsi}
       />
 
-      {/* Sisi Kanan: Canvas Interaktif React Flow dengan Undo / Redo */}
+      {/* Sisi Kanan: Canvas Interaktif React Flow */}
       <CanvasView
         nodes={nodes}
         edges={edges}
@@ -343,6 +445,9 @@ export default function App() {
         onRedo={handleRedo}
         canUndo={riwayatUndo.length > 0}
         canRedo={riwayatRedo.length > 0}
+        onTambahNodeManual={handleTambahNodeManual}
+        onUbahWarnaNode={handleUbahWarnaNode}
+        onHapusNode={handleHapusNode}
       />
     </div>
   );

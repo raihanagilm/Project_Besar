@@ -1,10 +1,24 @@
 import React, { useState } from 'react';
-import { Send, ShieldCheck, CheckCircle2, AlertTriangle, Layers, Edit2, Check, X, Clock } from 'lucide-react';
+import {
+  Send,
+  ShieldCheck,
+  CheckCircle2,
+  AlertTriangle,
+  Layers,
+  Edit2,
+  Check,
+  X,
+  Clock,
+  Zap,
+  BrainCircuit,
+  Loader2,
+  ArrowRight
+} from 'lucide-react';
 import { tokens } from '../../tokens/design_tokens';
 
 /**
  * ChatPanel (UX-01: Technical Component Name)
- * Menampilkan riwayat obrolan tersimpan, kemampuan edit pesan, dan status Jev Log
+ * Menampilkan riwayat obrolan tersimpan, pilihan mode (Fast / Thinking), loading spinner, dan rekomendasi opsi
  */
 export const ChatPanel = ({
   daftarObrolan,
@@ -14,10 +28,13 @@ export const ChatPanel = ({
   logVerifikasi,
   ringkasanIde,
   namaProyek,
-  onBukaGantiProyek
+  onBukaGantiProyek,
+  modeChat,
+  setModeChat,
+  onTerapkanOpsi
 }) => {
   const [pesan, setPesan] = useState('');
-  const [tabAktif, setTabAktif] = useState('chat'); // 'chat' atau 'jev_log'
+  const [tabAktif, setTabAktif] = useState('chat');
   const [editingSesiId, setEditingSesiId] = useState(null);
   const [editPesanTeks, setEditPesanTeks] = useState('');
 
@@ -42,7 +59,7 @@ export const ChatPanel = ({
   return (
     <div
       style={{
-        width: '400px',
+        width: '420px',
         height: '100%',
         backgroundColor: tokens.warna.kartu,
         borderRight: `1px solid ${tokens.warna.garis_batas}`,
@@ -146,102 +163,187 @@ export const ChatPanel = ({
             {/* Riwayat Chat Tersimpan */}
             {daftarObrolan.length === 0 ? (
               <div style={{ fontSize: '12px', color: tokens.warna.teks.sekunder, lineHeight: '1.5', textAlign: 'center', padding: tokens.spasi.lg }}>
-                Belum ada pesan untuk proyek ini. Masukkan rencana atau konsep fitur di bawah!
+                Belum ada pesan untuk proyek ini. Masukkan rencana atau klik kanan di kanvas untuk menambah manual!
               </div>
             ) : (
-              daftarObrolan.map((sesi) => (
-                <div
-                  key={sesi.sesi_id}
-                  style={{
-                    backgroundColor: tokens.warna.latar,
-                    border: `1px solid ${tokens.warna.garis_batas}`,
-                    borderRadius: tokens.radius.md,
-                    padding: tokens.spasi.md,
-                    position: 'relative',
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: tokens.spasi.xs }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: tokens.warna.teks.redup }}>
-                      <Clock size={11} />
-                      <span>{new Date(sesi.dibuat_pada).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</span>
+              daftarObrolan.map((sesi) => {
+                const thinkingData = sesi.hasil_verifikasi?.mode === 'thinking' ? sesi.hasil_verifikasi.hasil_thinking : null;
+
+                return (
+                  <div
+                    key={sesi.sesi_id}
+                    style={{
+                      backgroundColor: tokens.warna.latar,
+                      border: `1px solid ${tokens.warna.garis_batas}`,
+                      borderRadius: tokens.radius.md,
+                      padding: tokens.spasi.md,
+                      position: 'relative',
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: tokens.spasi.xs }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: tokens.warna.teks.redup }}>
+                        <Clock size={11} />
+                        <span>{new Date(sesi.dibuat_pada).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</span>
+                      </div>
+                      {editingSesiId !== sesi.sesi_id && (
+                        <button
+                          onClick={() => mulaiEdit(sesi)}
+                          title="Edit pesan ini"
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            cursor: 'pointer',
+                            color: tokens.warna.teks.sekunder,
+                            padding: '2px',
+                          }}
+                        >
+                          <Edit2 size={13} />
+                        </button>
+                      )}
                     </div>
-                    {editingSesiId !== sesi.sesi_id && (
-                      <button
-                        onClick={() => mulaiEdit(sesi)}
-                        title="Edit pesan ini"
-                        style={{
-                          background: 'none',
-                          border: 'none',
-                          cursor: 'pointer',
-                          color: tokens.warna.teks.sekunder,
-                          padding: '2px',
-                        }}
-                      >
-                        <Edit2 size={13} />
-                      </button>
+
+                    {editingSesiId === sesi.sesi_id ? (
+                      <div>
+                        <textarea
+                          rows={3}
+                          value={editPesanTeks}
+                          onChange={(e) => setEditPesanTeks(e.target.value)}
+                          style={{
+                            width: '100%',
+                            backgroundColor: tokens.warna.kartu,
+                            border: `1px solid ${tokens.warna.aksen.utama}`,
+                            borderRadius: tokens.radius.sm,
+                            color: tokens.warna.teks.utama,
+                            padding: tokens.spasi.xs,
+                            fontSize: '12px',
+                            outline: 'none',
+                            resize: 'none',
+                          }}
+                        />
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: tokens.spasi.xs, marginTop: tokens.spasi.xs }}>
+                          <button
+                            onClick={() => setEditingSesiId(null)}
+                            style={{
+                              background: 'transparent',
+                              border: `1px solid ${tokens.warna.garis_batas}`,
+                              color: tokens.warna.teks.sekunder,
+                              borderRadius: tokens.radius.sm,
+                              padding: '2px 8px',
+                              fontSize: '11px',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            Batal
+                          </button>
+                          <button
+                            onClick={() => simpanEdit(sesi.sesi_id)}
+                            style={{
+                              backgroundColor: tokens.warna.aksen.utama,
+                              border: 'none',
+                              color: tokens.warna.teks.utama,
+                              borderRadius: tokens.radius.sm,
+                              padding: '2px 8px',
+                              fontSize: '11px',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '2px',
+                            }}
+                          >
+                            <Check size={12} />
+                            <span>Simpan</span>
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div>
+                        <div style={{ fontSize: '13px', color: tokens.warna.teks.utama, lineHeight: '1.4' }}>
+                          {sesi.pesan_mentah}
+                        </div>
+
+                        {/* Tampilan Kartu Rekomendasi Jika Berasal dari Mode Thinking */}
+                        {thinkingData && (
+                          <div style={{ marginTop: tokens.spasi.sm, borderTop: `1px dashed ${tokens.warna.garis_batas}`, paddingTop: tokens.spasi.sm }}>
+                            <div style={{ fontSize: '12px', color: tokens.warna.teks.sekunder, fontStyle: 'italic', marginBottom: tokens.spasi.sm }}>
+                              {thinkingData.analisa_pemikiran}
+                            </div>
+
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spasi.sm }}>
+                              {(thinkingData.opsi_rekomendasi || []).map((opsi, idx) => (
+                                <div
+                                  key={idx}
+                                  style={{
+                                    backgroundColor: tokens.warna.kartu,
+                                    border: `1px solid ${tokens.warna.garis_batas}`,
+                                    borderRadius: tokens.radius.sm,
+                                    padding: tokens.spasi.sm,
+                                  }}
+                                >
+                                  <div style={{ fontWeight: 600, fontSize: '12px', color: tokens.warna.status.info }}>
+                                    {opsi.judul}
+                                  </div>
+                                  <div style={{ fontSize: '11px', color: tokens.warna.teks.utama, marginTop: '2px' }}>
+                                    {opsi.penjelasan}
+                                  </div>
+                                  <div style={{ fontSize: '10px', color: tokens.warna.status.sukses, marginTop: '2px' }}>
+                                    + {opsi.kelebihan}
+                                  </div>
+                                  <div style={{ fontSize: '10px', color: tokens.warna.status.peringatan }}>
+                                    - {opsi.kekurangan}
+                                  </div>
+                                  <button
+                                    onClick={() => onTerapkanOpsi(opsi.instruksi_diagram || opsi.judul)}
+                                    style={{
+                                      marginTop: tokens.spasi.xs,
+                                      backgroundColor: tokens.warna.aksen.utama,
+                                      border: 'none',
+                                      borderRadius: tokens.radius.sm,
+                                      color: tokens.warna.teks.utama,
+                                      padding: '3px 8px',
+                                      fontSize: '11px',
+                                      cursor: 'pointer',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: '4px',
+                                    }}
+                                  >
+                                    <span>Terapkan Opsi Ini</span>
+                                    <ArrowRight size={11} />
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     )}
                   </div>
+                );
+              })
+            )}
 
-                  {editingSesiId === sesi.sesi_id ? (
-                    <div>
-                      <textarea
-                        rows={3}
-                        value={editPesanTeks}
-                        onChange={(e) => setEditPesanTeks(e.target.value)}
-                        style={{
-                          width: '100%',
-                          backgroundColor: tokens.warna.kartu,
-                          border: `1px solid ${tokens.warna.aksen.utama}`,
-                          borderRadius: tokens.radius.sm,
-                          color: tokens.warna.teks.utama,
-                          padding: tokens.spasi.xs,
-                          fontSize: '12px',
-                          outline: 'none',
-                          resize: 'none',
-                        }}
-                      />
-                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: tokens.spasi.xs, marginTop: tokens.spasi.xs }}>
-                        <button
-                          onClick={() => setEditingSesiId(null)}
-                          style={{
-                            background: 'transparent',
-                            border: `1px solid ${tokens.warna.garis_batas}`,
-                            color: tokens.warna.teks.sekunder,
-                            borderRadius: tokens.radius.sm,
-                            padding: '2px 8px',
-                            fontSize: '11px',
-                            cursor: 'pointer',
-                          }}
-                        >
-                          Batal
-                        </button>
-                        <button
-                          onClick={() => simpanEdit(sesi.sesi_id)}
-                          style={{
-                            backgroundColor: tokens.warna.aksen.utama,
-                            border: 'none',
-                            color: tokens.warna.teks.utama,
-                            borderRadius: tokens.radius.sm,
-                            padding: '2px 8px',
-                            fontSize: '11px',
-                            cursor: 'pointer',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '2px',
-                          }}
-                        >
-                          <Check size={12} />
-                          <span>Simpan & Re-verifikasi</span>
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div style={{ fontSize: '13px', color: tokens.warna.teks.utama, lineHeight: '1.4' }}>
-                      {sesi.pesan_mentah}
-                    </div>
-                  )}
-                </div>
-              ))
+            {/* Animasi Loading Transparan Saat Proses Berjalan */}
+            {sedangMemproses && (
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: tokens.spasi.sm,
+                  padding: tokens.spasi.md,
+                  backgroundColor: tokens.warna.latar,
+                  border: `1px dashed ${tokens.warna.aksen.utama}`,
+                  borderRadius: tokens.radius.md,
+                  color: tokens.warna.teks.utama,
+                  fontSize: '12px',
+                }}
+              >
+                <Loader2 size={16} className="spin-animation" color={tokens.warna.aksen.utama} />
+                <span>
+                  {modeChat === 'fast'
+                    ? 'Sedang mengekstrak dan memverifikasi diagram...'
+                    : 'Sedang menganalisa arsitektur dan opsi alternatif...'}
+                </span>
+              </div>
             )}
           </div>
         ) : (
@@ -291,6 +393,60 @@ export const ChatPanel = ({
         )}
       </div>
 
+      {/* Switch Mode Chat: Fast vs Thinking */}
+      <div
+        style={{
+          padding: `6px ${tokens.spasi.md}`,
+          backgroundColor: tokens.warna.latar,
+          borderTop: `1px solid ${tokens.warna.garis_batas}`,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+        }}
+      >
+        <span style={{ fontSize: '11px', color: tokens.warna.teks.redup, fontWeight: 600 }}>MODE AI:</span>
+        <div style={{ display: 'flex', gap: '4px' }}>
+          <button
+            type="button"
+            onClick={() => setModeChat('fast')}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px',
+              padding: '3px 8px',
+              borderRadius: tokens.radius.sm,
+              fontSize: '11px',
+              border: 'none',
+              cursor: 'pointer',
+              backgroundColor: modeChat === 'fast' ? tokens.warna.aksen.utama : 'transparent',
+              color: modeChat === 'fast' ? tokens.warna.teks.utama : tokens.warna.teks.sekunder,
+            }}
+          >
+            <Zap size={12} />
+            <span>Fast (Langsung Diagram)</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setModeChat('thinking')}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px',
+              padding: '3px 8px',
+              borderRadius: tokens.radius.sm,
+              fontSize: '11px',
+              border: 'none',
+              cursor: 'pointer',
+              backgroundColor: modeChat === 'thinking' ? tokens.warna.status.info : 'transparent',
+              color: modeChat === 'thinking' ? tokens.warna.teks.utama : tokens.warna.teks.sekunder,
+            }}
+          >
+            <BrainCircuit size={12} />
+            <span>Thinking (Diskusi & Opsi)</span>
+          </button>
+        </div>
+      </div>
+
       {/* Form Input Obrolan */}
       <form
         onSubmit={handleSubmit}
@@ -305,7 +461,13 @@ export const ChatPanel = ({
           type="text"
           value={pesan}
           onChange={(e) => setPesan(e.target.value)}
-          placeholder={sedangMemproses ? 'Jev sedang menganalisis & memverifikasi...' : 'Ketik rencana / fitur baru...'}
+          placeholder={
+            sedangMemproses
+              ? 'Sedang memproses...'
+              : modeChat === 'fast'
+              ? 'Tulis ide untuk langsung dibuatkan diagram...'
+              : 'Tanyakan arsitektur atau diskusikan ide...'
+          }
           disabled={sedangMemproses}
           style={{
             flex: 1,
@@ -334,7 +496,7 @@ export const ChatPanel = ({
             justifyContent: 'center',
           }}
         >
-          <Send size={15} />
+          {sedangMemproses ? <Loader2 size={15} className="spin-animation" /> : <Send size={15} />}
         </button>
       </form>
     </div>

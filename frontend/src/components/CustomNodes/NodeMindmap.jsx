@@ -5,12 +5,15 @@ import { tokens } from '../../tokens/design_tokens';
 
 export const NodeMindmap = memo(({ data }) => {
   const subPoin = data.sub_poin || [];
+  const cardColor = data.warna_kustom ? `${data.warna_kustom}22` : tokens.warna.kartu;
+  const borderColor = data.warna_kustom || tokens.warna.garis_batas;
+  const accentColor = data.warna_kustom || tokens.warna.status.info;
 
   return (
     <div
       style={{
-        backgroundColor: tokens.warna.kartu,
-        border: `1px solid ${tokens.warna.garis_batas}`,
+        backgroundColor: cardColor,
+        border: `1px solid ${borderColor}`,
         borderRadius: tokens.radius.md,
         padding: tokens.spasi.md,
         width: '240px',
@@ -18,10 +21,10 @@ export const NodeMindmap = memo(({ data }) => {
         color: tokens.warna.teks.utama,
       }}
     >
-      <Handle type="target" position={Position.Left} style={{ background: tokens.warna.status.info }} />
+      <Handle type="target" position={Position.Left} style={{ background: accentColor }} />
 
       <div style={{ display: 'flex', alignItems: 'center', gap: tokens.spasi.sm, marginBottom: tokens.spasi.sm }}>
-        <Lightbulb size={16} color={tokens.warna.status.info} />
+        <Lightbulb size={16} color={accentColor} />
         <div style={{ fontWeight: 600, fontSize: '13px' }}>{data.label}</div>
       </div>
 
@@ -37,7 +40,7 @@ export const NodeMindmap = memo(({ data }) => {
         </ul>
       )}
 
-      <Handle type="source" position={Position.Right} style={{ background: tokens.warna.status.info }} />
+      <Handle type="source" position={Position.Right} style={{ background: accentColor }} />
     </div>
   );
 });

@@ -49,6 +49,91 @@ Aturan Ketat:
 4. Output HANYA JSON murni tanpa ```json ... ```.
 """
 
+SYSTEM_THINKING_PROMPT = """Kamu adalah Jev System Co-Architect & Advisor (Thinking Mode).
+Tugasmu adalah mendiskusikan pemikiran dan arsitektur rencana pengguna, menganalisa trade-off, dan memberikan 2-3 opsi rekomendasi konkret beserta kelebihan dan kekurangannya.
+
+Format Output WAJIB JSON murni:
+{
+  "analisa_pemikiran": "Uraian pemikiran arsitektural dan pertimbangan teknis secara ringkas",
+  "opsi_rekomendasi": [
+    {
+      "id_opsi": "opsi_1",
+      "judul": "Judul Opsi 1",
+      "penjelasan": "Penjelasan pendekatan dan implementasinya",
+      "kelebihan": "Kelebihan pendekatan ini",
+      "kekurangan": "Kekurangan/risiko pendekatan ini",
+      "instruksi_diagram": "Ringkasan spesifikasi instruksi jika opsi ini diterapkan ke diagram"
+    },
+    {
+      "id_opsi": "opsi_2",
+      "judul": "Judul Opsi 2",
+      "penjelasan": "Penjelasan alternatif pendekatan kedua",
+      "kelebihan": "Kelebihan pendekatan ini",
+      "kekurangan": "Kekurangan pendekatan ini",
+      "instruksi_diagram": "Ringkasan spesifikasi instruksi jika opsi ini diterapkan ke diagram"
+    }
+  ]
+}
+Output HANYA JSON tanpa markdown backtick.
+"""
+
+def panggil_llm_thinking(pesan_pengguna: str, riwayat_obrolan: Optional[List[str]] = None) -> Dict[str, Any]:
+    """
+    Memanggil LLM dalam Thinking / Discussion Mode untuk memberikan analisis mendalam & kartu rekomendasi opsi.
+    """
+    messages = [{"role": "system", "content": SYSTEM_THINKING_PROMPT}]
+    if riwayat_obrolan and len(riwayat_obrolan) > 0:
+        konteks = "Riwayat percakapan proyek sebelumnya:\n"
+        for idx, chat in enumerate(riwayat_obrolan):
+            konteks += f"- {chat}\n"
+        konteks += f"\nPertanyaan/ide diskusi pengguna: \"{pesan_pengguna}\""
+        messages.append({"role": "user", "content": konteks})
+    else:
+        messages.append({"role": "user", "content": pesan_pengguna})
+
+    if GROQ_API_KEY:
+        try:
+            url = "https://api.groq.com/openai/v1/chat/completions"
+            headers = {
+                "Authorization": f"Bearer {GROQ_API_KEY}",
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "model": "qwen/qwen3.8-27b",
+                "messages": messages,
+                "temperature": 0.4,
+                "response_format": {"type": "json_object"}
+            }
+            resp = requests.post(url, headers=headers, json=payload, timeout=25)
+            if resp.status_code == 200:
+                konten = resp.json()["choices"][0]["message"]["content"]
+                return json.loads(konten)
+        except Exception as e:
+            print(f"[LLM Gateway Thinking] Groq error: {e}")
+
+    # Fallback Thinking
+    return {
+      "analisa_pemikiran": f"Analisis awal untuk: {pesan_pengguna}",
+      "opsi_rekomendasi": [
+        {
+          "id_opsi": "opsi_1",
+          "judul": "Pendekatan Modular Standar",
+          "penjelasan": "Membangun entitas inti dengan relasi langsung.",
+          "kelebihan": "Cepat diimplementasikan dan mudah dipahami",
+          "kekurangan": "Perlu refaktor jika sistem membesar",
+          "instruksi_diagram": f"Implementasikan tabel dan usecase standar untuk {pesan_pengguna}"
+        },
+        {
+          "id_opsi": "opsi_2",
+          "judul": "Pendekatan Skalabel / Terisolasi",
+          "penjelasan": "Memisahkan layer data dan konfigurasi peran secara ketat.",
+          "kelebihan": "Sangat aman dan terisolasi",
+          "kekurangan": "Memerlukan konfigurasi relasi lebih banyak",
+          "instruksi_diagram": f"Implementasikan arsitektur enterprise untuk {pesan_pengguna}"
+        }
+      ]
+    }
+
 def panggil_llm_ekstraksi(pesan_pengguna: str, riwayat_obrolan: Optional[List[str]] = None) -> Dict[str, Any]:
     """
     Memanggil LLM dengan menyertakan riwayat obrolan proyek agar diagram bersifat akumulatif (tidak hilang).

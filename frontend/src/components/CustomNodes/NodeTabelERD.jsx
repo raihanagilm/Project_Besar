@@ -5,12 +5,13 @@ import { tokens } from '../../tokens/design_tokens';
 
 export const NodeTabelERD = memo(({ data }) => {
   const kolom = data.kolom || [];
+  const headerColor = data.warna_kustom || tokens.warna.aksen.utama;
 
   return (
     <div
       style={{
         backgroundColor: tokens.warna.kartu,
-        border: `1px solid ${tokens.warna.garis_batas}`,
+        border: `1px solid ${data.warna_kustom || tokens.warna.garis_batas}`,
         borderRadius: tokens.radius.md,
         minWidth: '240px',
         boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.3)',
@@ -18,12 +19,12 @@ export const NodeTabelERD = memo(({ data }) => {
         fontFamily: 'system-ui, -apple-system, sans-serif',
       }}
     >
-      <Handle type="target" position={Position.Top} style={{ background: tokens.warna.aksen.utama }} />
+      <Handle type="target" position={Position.Top} style={{ background: headerColor }} />
       
       {/* Header Tabel */}
       <div
         style={{
-          backgroundColor: tokens.warna.aksen.utama,
+          backgroundColor: headerColor,
           color: tokens.warna.teks.utama,
           padding: `${tokens.spasi.sm} ${tokens.spasi.md}`,
           display: 'flex',
@@ -68,7 +69,7 @@ export const NodeTabelERD = memo(({ data }) => {
         ))}
       </div>
 
-      <Handle type="source" position={Position.Bottom} style={{ background: tokens.warna.aksen.utama }} />
+      <Handle type="source" position={Position.Bottom} style={{ background: headerColor }} />
     </div>
   );
 });

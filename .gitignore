@@ -1,0 +1,28 @@
+# Lingkungan Virtual Python
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# Kunci Rahasia & Variabel Lingkungan (OT-02)
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# Database Lokal (agar file biner SQLite tidak konflik di git)
+db/*.db
+db/*.sqlite3
+
+# Node & Frontend
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Editor & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

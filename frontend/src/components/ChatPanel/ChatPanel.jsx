@@ -1,10 +1,25 @@
 import React, { useState } from 'react';
-import { Send, ShieldCheck, CheckCircle2, AlertTriangle, Layers } from 'lucide-react';
+import { Send, ShieldCheck, CheckCircle2, AlertTriangle, Layers, Edit2, Check, X, Clock } from 'lucide-react';
 import { tokens } from '../../tokens/design_tokens';
 
-export const ChatPanel = ({ onKirimIde, sedangMemproses, logVerifikasi, ringkasanIde }) => {
+/**
+ * ChatPanel (UX-01: Technical Component Name)
+ * Menampilkan riwayat obrolan tersimpan, kemampuan edit pesan, dan status Jev Log
+ */
+export const ChatPanel = ({
+  daftarObrolan,
+  onKirimIde,
+  onEditPesan,
+  sedangMemproses,
+  logVerifikasi,
+  ringkasanIde,
+  namaProyek,
+  onBukaGantiProyek
+}) => {
   const [pesan, setPesan] = useState('');
-  const [tabAktif, setTabAktif] = useState('chat');
+  const [tabAktif, setTabAktif] = useState('chat'); // 'chat' atau 'jev_log'
+  const [editingSesiId, setEditingSesiId] = useState(null);
+  const [editPesanTeks, setEditPesanTeks] = useState('');
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -13,10 +28,21 @@ export const ChatPanel = ({ onKirimIde, sedangMemproses, logVerifikasi, ringkasa
     setPesan('');
   };
 
+  const mulaiEdit = (sesi) => {
+    setEditingSesiId(sesi.sesi_id);
+    setEditPesanTeks(sesi.pesan_mentah);
+  };
+
+  const simpanEdit = (sesiId) => {
+    if (!editPesanTeks.trim()) return;
+    onEditPesan(sesiId, editPesanTeks);
+    setEditingSesiId(null);
+  };
+
   return (
     <div
       style={{
-        width: '380px',
+        width: '400px',
         height: '100%',
         backgroundColor: tokens.warna.kartu,
         borderRight: `1px solid ${tokens.warna.garis_batas}`,
@@ -24,7 +50,7 @@ export const ChatPanel = ({ onKirimIde, sedangMemproses, logVerifikasi, ringkasa
         flexDirection: 'column',
       }}
     >
-      {/* Header Panel */}
+      {/* Header Panel dengan Nama Proyek */}
       <div
         style={{
           padding: `${tokens.spasi.md} ${tokens.spasi.lg}`,
@@ -34,13 +60,30 @@ export const ChatPanel = ({ onKirimIde, sedangMemproses, logVerifikasi, ringkasa
           justifyContent: 'space-between',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: tokens.spasi.sm }}>
-          <Layers size={18} color={tokens.warna.aksen.utama} />
-          <span style={{ fontWeight: 700, fontSize: '14px', color: tokens.warna.teks.utama }}>
-            Pencatat Rencana Besar
-          </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: tokens.spasi.sm, overflow: 'hidden' }}>
+          <Layers size={18} color={tokens.warna.aksen.utama} style={{ flexShrink: 0 }} />
+          <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <div style={{ fontWeight: 700, fontSize: '13px', color: tokens.warna.teks.utama, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {namaProyek || 'Rencana Besar'}
+            </div>
+            <button
+              onClick={onBukaGantiProyek}
+              style={{
+                background: 'none',
+                border: 'none',
+                padding: 0,
+                color: tokens.warna.aksen.muda,
+                fontSize: '11px',
+                cursor: 'pointer',
+                textDecoration: 'underline',
+              }}
+            >
+              Ganti / Buat Proyek
+            </button>
+          </div>
         </div>
-        <div style={{ display: 'flex', gap: tokens.spasi.xs }}>
+
+        <div style={{ display: 'flex', gap: tokens.spasi.xs, flexShrink: 0 }}>
           <button
             onClick={() => setTabAktif('chat')}
             style={{
@@ -54,7 +97,7 @@ export const ChatPanel = ({ onKirimIde, sedangMemproses, logVerifikasi, ringkasa
               cursor: 'pointer',
             }}
           >
-            Ide
+            Obrolan ({daftarObrolan.length})
           </button>
           <button
             onClick={() => setTabAktif('jev_log')}
@@ -78,10 +121,10 @@ export const ChatPanel = ({ onKirimIde, sedangMemproses, logVerifikasi, ringkasa
         </div>
       </div>
 
-      {/* Konten Area */}
+      {/* Konten Area Riwayat Chat & Jev Log */}
       <div style={{ flex: 1, overflowY: 'auto', padding: tokens.spasi.md }}>
         {tabAktif === 'chat' ? (
-          <div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spasi.md }}>
             {ringkasanIde && (
               <div
                 style={{
@@ -89,20 +132,117 @@ export const ChatPanel = ({ onKirimIde, sedangMemproses, logVerifikasi, ringkasa
                   border: `1px solid ${tokens.warna.garis_batas}`,
                   borderRadius: tokens.radius.md,
                   padding: tokens.spasi.md,
-                  marginBottom: tokens.spasi.md,
                 }}
               >
                 <div style={{ fontSize: '11px', color: tokens.warna.status.info, fontWeight: 600, marginBottom: tokens.spasi.xs }}>
-                  RINGKASAN STRUKTUR TERBARU
+                  RINGKASAN STRUKTUR AKTIF
                 </div>
                 <div style={{ fontSize: '13px', color: tokens.warna.teks.utama, lineHeight: '1.4' }}>
                   {ringkasanIde}
                 </div>
               </div>
             )}
-            <div style={{ fontSize: '12px', color: tokens.warna.teks.sekunder, lineHeight: '1.5' }}>
-              Ketikkan ide, fitur, alur proses, atau model data rencana besarmu di bawah. Mesin verifikasi Jev akan menterjemahkan ke kanvas secara deterministik.
-            </div>
+
+            {/* Riwayat Chat Tersimpan */}
+            {daftarObrolan.length === 0 ? (
+              <div style={{ fontSize: '12px', color: tokens.warna.teks.sekunder, lineHeight: '1.5', textAlign: 'center', padding: tokens.spasi.lg }}>
+                Belum ada pesan untuk proyek ini. Masukkan rencana atau konsep fitur di bawah!
+              </div>
+            ) : (
+              daftarObrolan.map((sesi) => (
+                <div
+                  key={sesi.sesi_id}
+                  style={{
+                    backgroundColor: tokens.warna.latar,
+                    border: `1px solid ${tokens.warna.garis_batas}`,
+                    borderRadius: tokens.radius.md,
+                    padding: tokens.spasi.md,
+                    position: 'relative',
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: tokens.spasi.xs }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: tokens.warna.teks.redup }}>
+                      <Clock size={11} />
+                      <span>{new Date(sesi.dibuat_pada).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</span>
+                    </div>
+                    {editingSesiId !== sesi.sesi_id && (
+                      <button
+                        onClick={() => mulaiEdit(sesi)}
+                        title="Edit pesan ini"
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          cursor: 'pointer',
+                          color: tokens.warna.teks.sekunder,
+                          padding: '2px',
+                        }}
+                      >
+                        <Edit2 size={13} />
+                      </button>
+                    )}
+                  </div>
+
+                  {editingSesiId === sesi.sesi_id ? (
+                    <div>
+                      <textarea
+                        rows={3}
+                        value={editPesanTeks}
+                        onChange={(e) => setEditPesanTeks(e.target.value)}
+                        style={{
+                          width: '100%',
+                          backgroundColor: tokens.warna.kartu,
+                          border: `1px solid ${tokens.warna.aksen.utama}`,
+                          borderRadius: tokens.radius.sm,
+                          color: tokens.warna.teks.utama,
+                          padding: tokens.spasi.xs,
+                          fontSize: '12px',
+                          outline: 'none',
+                          resize: 'none',
+                        }}
+                      />
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: tokens.spasi.xs, marginTop: tokens.spasi.xs }}>
+                        <button
+                          onClick={() => setEditingSesiId(null)}
+                          style={{
+                            background: 'transparent',
+                            border: `1px solid ${tokens.warna.garis_batas}`,
+                            color: tokens.warna.teks.sekunder,
+                            borderRadius: tokens.radius.sm,
+                            padding: '2px 8px',
+                            fontSize: '11px',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          Batal
+                        </button>
+                        <button
+                          onClick={() => simpanEdit(sesi.sesi_id)}
+                          style={{
+                            backgroundColor: tokens.warna.aksen.utama,
+                            border: 'none',
+                            color: tokens.warna.teks.utama,
+                            borderRadius: tokens.radius.sm,
+                            padding: '2px 8px',
+                            fontSize: '11px',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '2px',
+                          }}
+                        >
+                          <Check size={12} />
+                          <span>Simpan & Re-verifikasi</span>
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: '13px', color: tokens.warna.teks.utama, lineHeight: '1.4' }}>
+                      {sesi.pesan_mentah}
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
           </div>
         ) : (
           <div>
@@ -111,7 +251,7 @@ export const ChatPanel = ({ onKirimIde, sedangMemproses, logVerifikasi, ringkasa
             </div>
             {logVerifikasi.length === 0 ? (
               <div style={{ fontSize: '12px', color: tokens.warna.teks.redup }}>
-                Belum ada verifikasi yang dijalankan. Kirimkan ide untuk memulai.
+                Belum ada verifikasi yang dijalankan untuk proyek ini.
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spasi.xs }}>
@@ -151,7 +291,7 @@ export const ChatPanel = ({ onKirimIde, sedangMemproses, logVerifikasi, ringkasa
         )}
       </div>
 
-      {/* Form Input Pesan */}
+      {/* Form Input Obrolan */}
       <form
         onSubmit={handleSubmit}
         style={{
@@ -165,7 +305,7 @@ export const ChatPanel = ({ onKirimIde, sedangMemproses, logVerifikasi, ringkasa
           type="text"
           value={pesan}
           onChange={(e) => setPesan(e.target.value)}
-          placeholder={sedangMemproses ? 'Jev sedang memverifikasi...' : 'Jelaskan rencana besarmu...'}
+          placeholder={sedangMemproses ? 'Jev sedang menganalisis & memverifikasi...' : 'Ketik rencana / fitur baru...'}
           disabled={sedangMemproses}
           style={{
             flex: 1,

@@ -138,3 +138,4 @@ export const CanvasView = ({
     </div>
   );
 };
+

@@ -413,6 +413,7 @@ export default function App() {
         daftarProyek={daftarProyek}
         onPilihProyek={pilihProyek}
         onBuatProyek={handleBuatProyek}
+        onClose={proyekAktif ? () => setIsModalOpen(false) : null}
       />
 
       {/* Sisi Kiri: Chat Panel & Riwayat Obrolan */}
@@ -428,6 +429,7 @@ export default function App() {
         modeChat={modeChat}
         setModeChat={setModeChat}
         onTerapkanOpsi={handleTerapkanOpsi}
+        nodesTerkini={nodes}
       />
 
       {/* Sisi Kanan: Canvas Interaktif React Flow */}

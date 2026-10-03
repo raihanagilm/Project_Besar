@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
-import { FolderPlus, Layers, Calendar, ChevronRight } from 'lucide-react';
+import { FolderPlus, Layers, Calendar, ChevronRight, X } from 'lucide-react';
 import { tokens } from '../../tokens/design_tokens';
 
 /**
  * ModalProyekBaru (UX-01: Technical Component Name)
- * Tampilan awal untuk membuat atau memilih proyek rencana besar
+ * Tampilan awal untuk membuat atau memilih proyek rencana besar, dilengkapi tombol tutup (X)
  */
-export const ModalProyekBaru = ({ daftarProyek, onPilihProyek, onBuatProyek, isOpen }) => {
+export const ModalProyekBaru = ({ daftarProyek, onPilihProyek, onBuatProyek, isOpen, onClose }) => {
   const [judul, setJudul] = useState('');
   const [deskripsi, setDeskripsi] = useState('');
   const [mode, setMode] = useState(daftarProyek.length > 0 ? 'pilih' : 'buat');
@@ -48,7 +48,7 @@ export const ModalProyekBaru = ({ daftarProyek, onPilihProyek, onBuatProyek, isO
           flexDirection: 'column',
         }}
       >
-        {/* Header Modal */}
+        {/* Header Modal dengan Tombol Keluar (X) */}
         <div
           style={{
             padding: `${tokens.spasi.lg} ${tokens.spasi.xl}`,
@@ -69,6 +69,29 @@ export const ModalProyekBaru = ({ daftarProyek, onPilihProyek, onBuatProyek, isO
               </div>
             </div>
           </div>
+
+          {/* Tombol X untuk keluar / menutup modal jika ada proyek aktif */}
+          {onClose && (
+            <button
+              onClick={onClose}
+              title="Tutup dialog"
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: tokens.warna.teks.sekunder,
+                cursor: 'pointer',
+                padding: '4px',
+                borderRadius: tokens.radius.sm,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.color = tokens.warna.teks.utama)}
+              onMouseLeave={(e) => (e.currentTarget.style.color = tokens.warna.teks.sekunder)}
+            >
+              <X size={18} />
+            </button>
+          )}
         </div>
 
         {/* Tab Pilihan Mode */}

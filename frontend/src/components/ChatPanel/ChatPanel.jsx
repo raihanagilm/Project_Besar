@@ -12,13 +12,18 @@ import {
   Zap,
   BrainCircuit,
   Loader2,
-  ArrowRight
+  ArrowRight,
+  Database,
+  MessageSquare
 } from 'lucide-react';
 import { tokens } from '../../tokens/design_tokens';
 
 /**
  * ChatPanel (UX-01: Technical Component Name)
- * Menampilkan riwayat obrolan tersimpan, pilihan mode (Fast / Thinking), loading spinner, dan rekomendasi opsi
+ * Memisahkan secara tegas:
+ * 1. Riwayat Chat: Pemikiran & instruksi teks pengguna (bisa diedit).
+ * 2. Riwayat ERD / Arsitektur: Rekaman struktur tabel, kolom, & diagram terkini.
+ * 3. Jev Log: Hasil audit formal engine.
  */
 export const ChatPanel = ({
   daftarObrolan,
@@ -31,10 +36,11 @@ export const ChatPanel = ({
   onBukaGantiProyek,
   modeChat,
   setModeChat,
-  onTerapkanOpsi
+  onTerapkanOpsi,
+  nodesTerkini
 }) => {
   const [pesan, setPesan] = useState('');
-  const [tabAktif, setTabAktif] = useState('chat');
+  const [tabAktif, setTabAktif] = useState('chat'); // 'chat' | 'erd_history' | 'jev_log'
   const [editingSesiId, setEditingSesiId] = useState(null);
   const [editPesanTeks, setEditPesanTeks] = useState('');
 
@@ -56,10 +62,13 @@ export const ChatPanel = ({
     setEditingSesiId(null);
   };
 
+  // Filter daftar tabel ERD dari nodes terkini
+  const tabelErdTerkini = (nodesTerkini || []).filter((n) => n.type === 'erdNode');
+
   return (
     <div
       style={{
-        width: '420px',
+        width: '430px',
         height: '100%',
         backgroundColor: tokens.warna.kartu,
         borderRight: `1px solid ${tokens.warna.garis_batas}`,
@@ -100,11 +109,13 @@ export const ChatPanel = ({
           </div>
         </div>
 
+        {/* 3 Tab Terpisah: Riwayat Chat | Riwayat ERD | Jev Log */}
         <div style={{ display: 'flex', gap: tokens.spasi.xs, flexShrink: 0 }}>
           <button
             onClick={() => setTabAktif('chat')}
+            title="Riwayat pesan pemikiran pengguna"
             style={{
-              padding: `${tokens.spasi.xs} ${tokens.spasi.sm}`,
+              padding: `${tokens.spasi.xs} 6px`,
               fontSize: '11px',
               fontWeight: 600,
               backgroundColor: tabAktif === 'chat' ? tokens.warna.aksen.utama : 'transparent',
@@ -112,14 +123,41 @@ export const ChatPanel = ({
               border: 'none',
               borderRadius: tokens.radius.sm,
               cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '3px',
             }}
           >
-            Obrolan ({daftarObrolan.length})
+            <MessageSquare size={12} />
+            <span>Chat ({daftarObrolan.length})</span>
           </button>
+
+          <button
+            onClick={() => setTabAktif('erd_history')}
+            title="Kamus tabel ERD & struktur data tersimpan"
+            style={{
+              padding: `${tokens.spasi.xs} 6px`,
+              fontSize: '11px',
+              fontWeight: 600,
+              backgroundColor: tabAktif === 'erd_history' ? tokens.warna.aksen.utama : 'transparent',
+              color: tabAktif === 'erd_history' ? tokens.warna.teks.utama : tokens.warna.teks.sekunder,
+              border: 'none',
+              borderRadius: tokens.radius.sm,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '3px',
+            }}
+          >
+            <Database size={12} />
+            <span>ERD ({tabelErdTerkini.length})</span>
+          </button>
+
           <button
             onClick={() => setTabAktif('jev_log')}
+            title="Log audit verifikasi Jev"
             style={{
-              padding: `${tokens.spasi.xs} ${tokens.spasi.sm}`,
+              padding: `${tokens.spasi.xs} 6px`,
               fontSize: '11px',
               fontWeight: 600,
               backgroundColor: tabAktif === 'jev_log' ? tokens.warna.aksen.utama : 'transparent',
@@ -129,41 +167,27 @@ export const ChatPanel = ({
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
-              gap: '4px',
+              gap: '3px',
             }}
           >
-            <ShieldCheck size={13} />
-            <span>Jev Log</span>
+            <ShieldCheck size={12} />
+            <span>Jev</span>
           </button>
         </div>
       </div>
 
-      {/* Konten Area Riwayat Chat & Jev Log */}
+      {/* Konten Area Tab */}
       <div style={{ flex: 1, overflowY: 'auto', padding: tokens.spasi.md }}>
-        {tabAktif === 'chat' ? (
+        {/* TAB 1: RIWAYAT CHAT */}
+        {tabAktif === 'chat' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spasi.md }}>
-            {ringkasanIde && (
-              <div
-                style={{
-                  backgroundColor: tokens.warna.latar,
-                  border: `1px solid ${tokens.warna.garis_batas}`,
-                  borderRadius: tokens.radius.md,
-                  padding: tokens.spasi.md,
-                }}
-              >
-                <div style={{ fontSize: '11px', color: tokens.warna.status.info, fontWeight: 600, marginBottom: tokens.spasi.xs }}>
-                  RINGKASAN STRUKTUR AKTIF
-                </div>
-                <div style={{ fontSize: '13px', color: tokens.warna.teks.utama, lineHeight: '1.4' }}>
-                  {ringkasanIde}
-                </div>
-              </div>
-            )}
+            <div style={{ fontSize: '11px', color: tokens.warna.teks.redup, fontWeight: 600, textTransform: 'uppercase' }}>
+              Riwayat Obrolan & Pemikiran Ide
+            </div>
 
-            {/* Riwayat Chat Tersimpan */}
             {daftarObrolan.length === 0 ? (
               <div style={{ fontSize: '12px', color: tokens.warna.teks.sekunder, lineHeight: '1.5', textAlign: 'center', padding: tokens.spasi.lg }}>
-                Belum ada pesan untuk proyek ini. Masukkan rencana atau klik kanan di kanvas untuk menambah manual!
+                Belum ada pesan obrolan untuk proyek ini. Masukkan ide atau instruksi di bawah!
               </div>
             ) : (
               daftarObrolan.map((sesi) => {
@@ -261,7 +285,7 @@ export const ChatPanel = ({
                           {sesi.pesan_mentah}
                         </div>
 
-                        {/* Tampilan Kartu Rekomendasi Jika Berasal dari Mode Thinking */}
+                        {/* Rekomendasi Opsi Thinking */}
                         {thinkingData && (
                           <div style={{ marginTop: tokens.spasi.sm, borderTop: `1px dashed ${tokens.warna.garis_batas}`, paddingTop: tokens.spasi.sm }}>
                             <div style={{ fontSize: '12px', color: tokens.warna.teks.sekunder, fontStyle: 'italic', marginBottom: tokens.spasi.sm }}>
@@ -284,12 +308,6 @@ export const ChatPanel = ({
                                   </div>
                                   <div style={{ fontSize: '11px', color: tokens.warna.teks.utama, marginTop: '2px' }}>
                                     {opsi.penjelasan}
-                                  </div>
-                                  <div style={{ fontSize: '10px', color: tokens.warna.status.sukses, marginTop: '2px' }}>
-                                    + {opsi.kelebihan}
-                                  </div>
-                                  <div style={{ fontSize: '10px', color: tokens.warna.status.peringatan }}>
-                                    - {opsi.kekurangan}
                                   </div>
                                   <button
                                     onClick={() => onTerapkanOpsi(opsi.instruksi_diagram || opsi.judul)}
@@ -322,7 +340,7 @@ export const ChatPanel = ({
               })
             )}
 
-            {/* Animasi Loading Transparan Saat Proses Berjalan */}
+            {/* Animasi Loading Transparan */}
             {sedangMemproses && (
               <div
                 style={{
@@ -346,7 +364,85 @@ export const ChatPanel = ({
               </div>
             )}
           </div>
-        ) : (
+        )}
+
+        {/* TAB 2: RIWAYAT & STRUKTUR ERD (TERPISAH DARI CHAT) */}
+        {tabAktif === 'erd_history' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spasi.md }}>
+            <div style={{ fontSize: '11px', color: tokens.warna.teks.redup, fontWeight: 600, textTransform: 'uppercase' }}>
+              Struktur & Kamus Tabel ERD Tersimpan
+            </div>
+
+            {ringkasanIde && (
+              <div
+                style={{
+                  backgroundColor: tokens.warna.latar,
+                  border: `1px solid ${tokens.warna.garis_batas}`,
+                  borderRadius: tokens.radius.md,
+                  padding: tokens.spasi.md,
+                }}
+              >
+                <div style={{ fontSize: '11px', color: tokens.warna.status.info, fontWeight: 600, marginBottom: tokens.spasi.xs }}>
+                  RINGKASAN SISTEM
+                </div>
+                <div style={{ fontSize: '12px', color: tokens.warna.teks.utama, lineHeight: '1.4' }}>
+                  {ringkasanIde}
+                </div>
+              </div>
+            )}
+
+            {tabelErdTerkini.length === 0 ? (
+              <div style={{ fontSize: '12px', color: tokens.warna.teks.sekunder, textAlign: 'center', padding: tokens.spasi.lg }}>
+                Belum ada tabel ERD di dalam kanvas proyek ini.
+              </div>
+            ) : (
+              tabelErdTerkini.map((tabel) => {
+                const kolomList = tabel.data?.kolom || [];
+                return (
+                  <div
+                    key={tabel.id}
+                    style={{
+                      backgroundColor: tokens.warna.latar,
+                      border: `1px solid ${tabel.data?.warna_kustom || tokens.warna.garis_batas}`,
+                      borderRadius: tokens.radius.md,
+                      padding: tokens.spasi.md,
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: tokens.spasi.sm, marginBottom: tokens.spasi.sm }}>
+                      <Database size={15} color={tabel.data?.warna_kustom || tokens.warna.aksen.utama} />
+                      <span style={{ fontWeight: 700, fontSize: '13px', color: tokens.warna.teks.utama }}>
+                        {tabel.data?.nama_tabel}
+                      </span>
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                      {kolomList.map((col, idx) => (
+                        <div
+                          key={idx}
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            fontSize: '11px',
+                            color: col.is_pk ? tokens.warna.status.peringatan : tokens.warna.teks.sekunder,
+                            fontFamily: 'monospace',
+                            padding: '2px 0',
+                            borderBottom: `1px solid rgba(51, 65, 85, 0.4)`,
+                          }}
+                        >
+                          <span>{col.nama} {col.is_pk ? '(PK)' : ''}</span>
+                          <span>{col.tipe}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        )}
+
+        {/* TAB 3: JEV LOG VERIFIKASI */}
+        {tabAktif === 'jev_log' && (
           <div>
             <div style={{ fontSize: '12px', fontWeight: 600, color: tokens.warna.teks.sekunder, marginBottom: tokens.spasi.sm }}>
               STATUS AUDIT JEV VERIFIER ENGINE
@@ -404,7 +500,7 @@ export const ChatPanel = ({
           justifyContent: 'space-between',
         }}
       >
-        <span style={{ fontSize: '11px', color: tokens.warna.teks.redup, fontWeight: 600 }}>MODE AI:</span>
+        <span style={{ fontSize: '11px', color: tokens.warna.teks.redup, fontWeight: 600 }}>MODE:</span>
         <div style={{ display: 'flex', gap: '4px' }}>
           <button
             type="button"
@@ -423,7 +519,7 @@ export const ChatPanel = ({
             }}
           >
             <Zap size={12} />
-            <span>Fast (Langsung Diagram)</span>
+            <span>Fast</span>
           </button>
           <button
             type="button"
@@ -442,7 +538,7 @@ export const ChatPanel = ({
             }}
           >
             <BrainCircuit size={12} />
-            <span>Thinking (Diskusi & Opsi)</span>
+            <span>Thinking</span>
           </button>
         </div>
       </div>

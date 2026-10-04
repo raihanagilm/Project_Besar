@@ -93,10 +93,26 @@ def detail_rencana(rencana_id: str):
         "obrolan": obrolan
     }
 
+@router.delete("/rencana/{rencana_id}")
+def hapus_rencana(rencana_id: str):
+    """Menghapus sebuah proyek rencana beserta seluruh obrolan, node, dan relasinya"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM rencana WHERE rencana_id = ?;", (rencana_id,))
+        if not cursor.fetchone():
+            raise HTTPException(status_code=404, detail="Proyek rencana tidak ditemukan")
+        
+        cursor.execute("DELETE FROM node_diagram WHERE rencana_id = ?;", (rencana_id,))
+        cursor.execute("DELETE FROM relasi_diagram WHERE rencana_id = ?;", (rencana_id,))
+        cursor.execute("DELETE FROM sesi_obrolan WHERE rencana_id = ?;", (rencana_id,))
+        cursor.execute("DELETE FROM rencana WHERE rencana_id = ?;", (rencana_id,))
+        conn.commit()
+    return {"status": "sukses", "pesan": f"Proyek {rencana_id} berhasil dihapus"}
+
 def ambil_state_diagram_internal(conn, rencana_id: str) -> Dict[str, Any]:
     """Mengambil representasi terstruktur dari diagram yang sudah ada di database saat ini"""
     cursor = conn.cursor()
-    cursor.execute("SELECT tipe_node, data_json FROM node_diagram WHERE rencana_id = ?;", (rencana_id,))
+    cursor.execute("SELECT node_id, tipe_node, data_json FROM node_diagram WHERE rencana_id = ?;", (rencana_id,))
     nodes = cursor.fetchall()
     
     tabel_list = []
@@ -105,6 +121,7 @@ def ambil_state_diagram_internal(conn, rencana_id: str) -> Dict[str, Any]:
     
     for n in nodes:
         tipe = n["tipe_node"]
+        nid = n["node_id"]
         try:
             d = json.loads(n["data_json"])
         except Exception:
@@ -117,15 +134,24 @@ def ambil_state_diagram_internal(conn, rencana_id: str) -> Dict[str, Any]:
             })
         elif tipe == "mindmapNode":
             mindmap_list.append({
+                "id": nid,
+                "parent_id": d.get("parent_id"),
                 "label": d.get("label"),
                 "kategori": d.get("kategori"),
                 "sub_poin": d.get("sub_poin", [])
             })
-        elif tipe == "useCaseNode":
+        elif tipe in ("workflowNode", "useCaseNode"):
             usecase_list.append({
-                "aktor": d.get("aktor"),
-                "kasus": d.get("kasus"),
-                "deskripsi": d.get("deskripsi")
+                "id": nid,
+                "tipe_simbol": d.get("tipe_simbol", "proses"),
+                "no_proses": d.get("no_proses"),
+                "aktor": d.get("aktor", d.get("penanggung_jawab")),
+                "langkah": d.get("langkah", d.get("label", d.get("kasus"))),
+                "deskripsi": d.get("deskripsi"),
+                "lanjut_ke": d.get("lanjut_ke"),
+                "cabang_ya": d.get("cabang_ya"),
+                "cabang_tidak": d.get("cabang_tidak"),
+                "data_store": d.get("data_store")
             })
 
     cursor.execute("SELECT node_asal_id, node_tujuan_id, label_relasi FROM relasi_diagram WHERE rencana_id = ?;", (rencana_id,))
@@ -133,10 +159,37 @@ def ambil_state_diagram_internal(conn, rencana_id: str) -> Dict[str, Any]:
 
     return {
         "tabel": tabel_list,
-        "mindmap": mindmap_list,
-        "usecase": usecase_list,
+        "workflows": usecase_list,
         "relasi": relasi_list
     }
+
+def ambil_posisi_map_internal(conn, rencana_id: str, posisi_nodes_terkini: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Dict[str, float]]:
+    """Mengambil pemetaan koordinat posisi node yang sudah ada / di-drag oleh user agar tidak ter-reset"""
+    posisi_map = {}
+    cursor = conn.cursor()
+    cursor.execute("SELECT node_id, tipe_node, label, posisi_x, posisi_y, data_json FROM node_diagram WHERE rencana_id = ?;", (rencana_id,))
+    for r in cursor.fetchall():
+        posisi_map[r["node_id"]] = {"x": r["posisi_x"], "y": r["posisi_y"]}
+        try:
+            dj = json.loads(r["data_json"])
+            if dj.get("nama_tabel"):
+                posisi_map[f"erd_{dj['nama_tabel']}"] = {"x": r["posisi_x"], "y": r["posisi_y"]}
+                posisi_map[dj["nama_tabel"]] = {"x": r["posisi_x"], "y": r["posisi_y"]}
+        except Exception:
+            pass
+
+    if posisi_nodes_terkini:
+        for item in posisi_nodes_terkini:
+            nid = item.get("id")
+            pos = item.get("position")
+            if nid and pos and isinstance(pos, dict):
+                posisi_map[nid] = {"x": float(pos.get("x", 0)), "y": float(pos.get("y", 0))}
+                d = item.get("data") or {}
+                if d.get("nama_tabel"):
+                    posisi_map[f"erd_{d['nama_tabel']}"] = {"x": float(pos.get("x", 0)), "y": float(pos.get("y", 0))}
+                    posisi_map[d["nama_tabel"]] = {"x": float(pos.get("x", 0)), "y": float(pos.get("y", 0))}
+
+    return posisi_map
 
 def simpan_node_dan_edge_internal(conn, rencana_id: str, nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]], waktu: str):
     """Helper untuk otomatis meng-update node dan relasi di SQLite saat chat masuk"""
@@ -164,12 +217,10 @@ def simpan_node_dan_edge_internal(conn, rencana_id: str, nodes: List[Dict[str, A
         pos = node.get("position", {})
         node_data = node.get("data", {})
 
-        # Jika node ini sebelumnya sudah pernah ada dan posisinya pernah disetel manual, pertahankan posisinya
-        if node_id in existing_map:
-            pos["x"] = existing_map[node_id]["x"]
-            pos["y"] = existing_map[node_id]["y"]
-            if existing_map[node_id].get("warna_kustom"):
-                node_data["warna_kustom"] = existing_map[node_id]["warna_kustom"]
+        # Ambil posisi yang dikirimkan (hasil drag pengguna terkini)
+        # Jika node_data belum punya warna_kustom dan ada di existing_map, pertahankan warna kustom lama
+        if node_id in existing_map and existing_map[node_id].get("warna_kustom") and not node_data.get("warna_kustom"):
+            node_data["warna_kustom"] = existing_map[node_id]["warna_kustom"]
 
         cursor.execute(
             """INSERT INTO node_diagram (node_id, rencana_id, tipe_node, label, posisi_x, posisi_y, data_json, dibuat_pada)
@@ -221,12 +272,18 @@ def translate_ide_dengan_jev(dto: ChatInputDTO):
         riwayat_pesan = [r["pesan_mentah"] for r in cursor.fetchall()]
         
         state_diagram_saat_ini = ambil_state_diagram_internal(conn, rencana_id)
+        posisi_map = ambil_posisi_map_internal(conn, rencana_id, dto.posisi_nodes_terkini)
 
     mode = dto.mode or "fast"
     sesi_id = buat_id_terstruktur("ses")
 
-    # JIKA MODE THINKING:
-    if mode == "thinking":
+    # Deteksi Otomatis: Jika pesan adalah pertanyaan arsitektural/teknis (mengandung kata tanya atau tanda tanya)
+    teks_lower = dto.pesan.strip().lower()
+    kata_tanya = ["kenapa", "mengapa", "kenapa kok", "kenapa ya", "apa bedanya", "bagaimana", "kapan", "jelaskan", "apakah", "why", "how", "what is"]
+    adalah_pertanyaan = any(teks_lower.startswith(k) or f" {k} " in f" {teks_lower} " for k in kata_tanya) or ("?" in teks_lower and not ("tambah" in teks_lower or "buat" in teks_lower or "ubah" in teks_lower))
+
+    # JIKA MODE THINKING ATAU PERTANYAAN DISKUSI:
+    if mode == "thinking" or adalah_pertanyaan:
         hasil_thinking = panggil_llm_thinking(
             dto.pesan,
             riwayat_obrolan=riwayat_pesan,
@@ -250,37 +307,62 @@ def translate_ide_dengan_jev(dto: ChatInputDTO):
             "mode": "thinking",
             "hasil_thinking": hasil_thinking,
             "is_valid": True,
-            "log_verifikasi": ["[Jev Advisor] Analisa thinking selesai berbasis data diagram terkini."],
+            "log_verifikasi": ["[Jev Advisor] Analisa & Jawaban Arsitektur selesai berbasis data terkini."],
             "hasil_terstruktur": None
         }
 
     # JIKA MODE FAST:
-    raw_ast = panggil_llm_ekstraksi(
-        dto.pesan,
-        riwayat_obrolan=riwayat_pesan,
-        state_diagram_saat_ini=state_diagram_saat_ini
-    )
-    is_valid, log_verifikasi, hasil_terstruktur = verifier.verifikasi_dan_eksekusi(raw_ast)
-
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            "INSERT INTO sesi_obrolan (sesi_id, rencana_id, peran, pesan_mentah, hasil_verifikasi_json, dibuat_pada) VALUES (?, ?, ?, ?, ?, ?);",
-            (sesi_id, rencana_id, "pengguna", dto.pesan, json.dumps(log_verifikasi), waktu_skrg)
+    try:
+        raw_ast = panggil_llm_ekstraksi(
+            dto.pesan,
+            riwayat_obrolan=riwayat_pesan,
+            state_diagram_saat_ini=state_diagram_saat_ini
         )
-        nodes = hasil_terstruktur.get("nodes", [])
-        edges = hasil_terstruktur.get("edges", [])
-        simpan_node_dan_edge_internal(conn, rencana_id, nodes, edges, waktu_skrg)
-        conn.commit()
+        is_valid, log_verifikasi, hasil_terstruktur = verifier.verifikasi_dan_eksekusi(raw_ast, posisi_terkini=posisi_map)
+        
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO sesi_obrolan (sesi_id, rencana_id, peran, pesan_mentah, hasil_verifikasi_json, dibuat_pada) VALUES (?, ?, ?, ?, ?, ?);",
+                (sesi_id, rencana_id, "pengguna", dto.pesan, json.dumps(log_verifikasi), waktu_skrg)
+            )
+            nodes = hasil_terstruktur.get("nodes", [])
+            edges = hasil_terstruktur.get("edges", [])
+            simpan_node_dan_edge_internal(conn, rencana_id, nodes, edges, waktu_skrg)
+            conn.commit()
 
-    return {
-        "sesi_id": sesi_id,
-        "rencana_id": rencana_id,
-        "mode": "fast",
-        "is_valid": is_valid,
-        "log_verifikasi": log_verifikasi,
-        "hasil_terstruktur": hasil_terstruktur
-    }
+        return {
+            "sesi_id": sesi_id,
+            "rencana_id": rencana_id,
+            "mode": "fast",
+            "is_valid": is_valid,
+            "log_verifikasi": log_verifikasi,
+            "hasil_terstruktur": hasil_terstruktur
+        }
+    except Exception as e:
+        pesan_error = f"[Kendala Koneksi AI]: {str(e)}"
+        log_gagal = [pesan_error, "Chat Anda telah berhasil disimpan di riwayat. Silakan kirim ulang atau refresh ketika koneksi AI telah aktif kembali."]
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO sesi_obrolan (sesi_id, rencana_id, peran, pesan_mentah, hasil_verifikasi_json, dibuat_pada) VALUES (?, ?, ?, ?, ?, ?);",
+                (sesi_id, rencana_id, "pengguna", dto.pesan, json.dumps(log_gagal), waktu_skrg)
+            )
+            conn.commit()
+            
+        return {
+            "sesi_id": sesi_id,
+            "rencana_id": rencana_id,
+            "mode": "fast",
+            "is_valid": False,
+            "log_verifikasi": log_gagal,
+            "hasil_terstruktur": {
+                "ringkasan_ide": "Sedang ada kendala koneksi ke server AI. Riwayat pesan Anda tetap tersimpan utuh di sistem.",
+                "nodes": [],
+                "edges": [],
+                "log_verifikasi": log_gagal
+            }
+        }
 
 @router.put("/chat/edit")
 def edit_chat_dan_reverifikasi(dto: EditChatDTO):
@@ -307,6 +389,7 @@ def edit_chat_dan_reverifikasi(dto: EditChatDTO):
                 semua_chat.append(r["pesan_mentah"])
                 
         state_diagram_saat_ini = ambil_state_diagram_internal(conn, dto.rencana_id)
+        posisi_map = ambil_posisi_map_internal(conn, dto.rencana_id, dto.posisi_nodes_terkini)
 
     mode = dto.mode or "fast"
     if mode == "thinking":
@@ -340,7 +423,7 @@ def edit_chat_dan_reverifikasi(dto: EditChatDTO):
         riwayat_obrolan=semua_chat[:-1],
         state_diagram_saat_ini=state_diagram_saat_ini
     )
-    is_valid, log_verifikasi, hasil_terstruktur = verifier.verifikasi_dan_eksekusi(raw_ast)
+    is_valid, log_verifikasi, hasil_terstruktur = verifier.verifikasi_dan_eksekusi(raw_ast, posisi_terkini=posisi_map)
 
     with get_db_connection() as conn:
         cursor = conn.cursor()

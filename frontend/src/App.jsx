@@ -28,8 +28,9 @@ export default function App() {
   const [ringkasanIde, setRingkasanIde] = useState('');
   const [sedangMemproses, setSedangMemproses] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [filterMode, setFilterMode] = useState('semua');
+  const [filterMode, setFilterMode] = useState('erd');
   const [modeChat, setModeChat] = useState('fast'); // 'fast' atau 'thinking'
+  const [teksPesanTerfokus, setTeksPesanTerfokus] = useState('');
 
   // History State untuk Undo / Redo
   const [riwayatUndo, setRiwayatUndo] = useState([]);
@@ -98,6 +99,28 @@ export default function App() {
       }
     } catch (err) {
       console.error('Gagal membuat proyek baru:', err);
+    }
+  };
+
+  // Menghapus proyek
+  const handleHapusProyek = async (rencanaId) => {
+    try {
+      const resp = await fetch(`${BACKEND_URL}/rencana/${rencanaId}`, {
+        method: 'DELETE',
+      });
+      if (resp.ok) {
+        if (proyekAktif?.rencana_id === rencanaId) {
+          setProyekAktif(null);
+          setNodes([]);
+          setEdges([]);
+          setDaftarObrolan([]);
+          setLogVerifikasi([]);
+          setIsModalOpen(true);
+        }
+        await fetchDaftarProyek();
+      }
+    } catch (err) {
+      console.error('Gagal menghapus proyek:', err);
     }
   };
 
@@ -176,30 +199,24 @@ export default function App() {
     let dataBaru = {};
 
     if (tipe === 'erdNode') {
-      const namaTabel = prompt('Masukkan nama tabel (bahasa Indonesia):', 'tabel_baru');
-      if (!namaTabel) return;
+      const idx = (nodes.filter((n) => n.type === 'erdNode').length || 0) + 1;
+      const namaTabel = `tabel_${idx}`;
       dataBaru = {
-        nama_tabel: namaTabel.trim().toLowerCase(),
+        nama_tabel: namaTabel,
         kolom: [
-          { nama: `${namaTabel.trim().toLowerCase()}_id`, tipe: 'TEXT', is_pk: true },
-          { nama: 'nama', tipe: 'TEXT', is_pk: false }
+          { nama: `${namaTabel}_id`, tipe: 'BIGINT', size: null, is_pk: true, is_fk: false, is_unique: true, is_indexed: true, is_nullable: false, keterangan: 'Primary Key' },
+          { nama: 'nama', tipe: 'VARCHAR', size: 100, is_pk: false, is_fk: false, is_unique: false, is_indexed: false, is_nullable: false, keterangan: 'Nama' },
+          { nama: 'dibuat_pada', tipe: 'TIMESTAMP', size: null, is_pk: false, is_fk: false, is_unique: false, is_indexed: false, is_nullable: false, keterangan: 'Audit waktu pembuatan' }
         ]
       };
-    } else if (tipe === 'mindmapNode') {
-      const label = prompt('Masukkan judul konsep mindmap:', 'Gagasan Baru');
-      if (!label) return;
+    } else if (tipe === 'workflowNode' || tipe === 'useCaseNode') {
+      const idx = (nodes.filter((n) => n.type === 'workflowNode').length || 0) + 1;
       dataBaru = {
-        label: label.trim(),
-        kategori: 'konsep',
-        sub_poin: ['Poin 1', 'Poin 2']
-      };
-    } else if (tipe === 'useCaseNode') {
-      const aksi = prompt('Masukkan nama kasus use case:', 'Melakukan Aksi');
-      if (!aksi) return;
-      dataBaru = {
+        tipe_simbol: 'proses',
+        no_proses: `${idx}.0`,
         aktor: 'Pengguna',
-        kasus: aksi.trim(),
-        deskripsi: 'Deskripsi alur penggunaan'
+        langkah: `Langkah Proses ${idx}`,
+        deskripsi: 'Deskripsi aktivitas alur kerja'
       };
     }
 
@@ -232,6 +249,31 @@ export default function App() {
     );
   };
 
+  // Edit Konten Node Manual via Custom Modal (Bukan Browser Prompt)
+  const handleEditNodeManual = (nodeId, dataBaru) => {
+    catatSnapshot();
+    setNodes((nds) =>
+      nds.map((n) => {
+        if (n.id === nodeId) {
+          return {
+            ...n,
+            data: {
+              ...n.data,
+              ...dataBaru,
+            },
+          };
+        }
+        return n;
+      })
+    );
+  };
+
+  // Hapus Garis Relasi Manual
+  const handleHapusRelasi = (edgeId) => {
+    catatSnapshot();
+    setEdges((eds) => eds.filter((e) => e.id !== edgeId));
+  };
+
   // Hapus Node Manual
   const handleHapusNode = (nodeId) => {
     catatSnapshot();
@@ -257,6 +299,7 @@ export default function App() {
           rencana_id: proyekAktif.rencana_id,
           pesan: pesan,
           mode: modeChat,
+          posisi_nodes_terkini: nodes.map(n => ({ id: n.id, type: n.type, position: n.position, data: n.data })),
         }),
       });
 
@@ -338,6 +381,7 @@ export default function App() {
           rencana_id: proyekAktif.rencana_id,
           pesan_baru: pesanBaru,
           mode: modeChat,
+          posisi_nodes_terkini: nodes.map(n => ({ id: n.id, type: n.type, position: n.position, data: n.data })),
         }),
       });
 
@@ -397,6 +441,19 @@ export default function App() {
     }
   };
 
+  // Handler Edit by AI dari Box Context Menu
+  const handleEditByAI = (node) => {
+    let tag = '';
+    if (node.type === 'erdNode') {
+      tag = node.data?.nama_tabel || node.id || 'tabel';
+    } else {
+      tag = node.data?.aktor || node.data?.label || node.data?.langkah || node.id || 'proses';
+    }
+    // Bersihkan karakter spasi atau spesial jika ada
+    const cleanTag = tag.trim().replace(/\s+/g, '_');
+    setTeksPesanTerfokus(`/${cleanTag} `);
+  };
+
   return (
     <div
       style={{
@@ -413,6 +470,7 @@ export default function App() {
         daftarProyek={daftarProyek}
         onPilihProyek={pilihProyek}
         onBuatProyek={handleBuatProyek}
+        onHapusProyek={handleHapusProyek}
         onClose={proyekAktif ? () => setIsModalOpen(false) : null}
       />
 
@@ -430,6 +488,8 @@ export default function App() {
         setModeChat={setModeChat}
         onTerapkanOpsi={handleTerapkanOpsi}
         nodesTerkini={nodes}
+        teksPesanTerfokus={teksPesanTerfokus}
+        setTeksPesanTerfokus={setTeksPesanTerfokus}
       />
 
       {/* Sisi Kanan: Canvas Interaktif React Flow */}
@@ -449,7 +509,10 @@ export default function App() {
         canRedo={riwayatRedo.length > 0}
         onTambahNodeManual={handleTambahNodeManual}
         onUbahWarnaNode={handleUbahWarnaNode}
+        onEditNodeManual={handleEditNodeManual}
         onHapusNode={handleHapusNode}
+        onHapusRelasi={handleHapusRelasi}
+        onEditByAI={handleEditByAI}
       />
     </div>
   );

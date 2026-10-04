@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
-import { FolderPlus, Layers, Calendar, ChevronRight, X } from 'lucide-react';
+import { FolderPlus, Layers, Calendar, ChevronRight, X, Trash2 } from 'lucide-react';
 import { tokens } from '../../tokens/design_tokens';
 
 /**
  * ModalProyekBaru (UX-01: Technical Component Name)
- * Tampilan awal untuk membuat atau memilih proyek rencana besar, dilengkapi tombol tutup (X)
+ * Tampilan awal untuk membuat atau memilih proyek rencana besar, dilengkapi tombol tutup (X) dan hapus proyek
  */
-export const ModalProyekBaru = ({ daftarProyek, onPilihProyek, onBuatProyek, isOpen, onClose }) => {
+export const ModalProyekBaru = ({ daftarProyek, onPilihProyek, onBuatProyek, onHapusProyek, isOpen, onClose }) => {
   const [judul, setJudul] = useState('');
   const [deskripsi, setDeskripsi] = useState('');
   const [mode, setMode] = useState(daftarProyek.length > 0 ? 'pilih' : 'buat');
@@ -168,7 +168,7 @@ export const ModalProyekBaru = ({ daftarProyek, onPilihProyek, onBuatProyek, isO
                     onMouseEnter={(e) => (e.currentTarget.style.borderColor = tokens.warna.aksen.utama)}
                     onMouseLeave={(e) => (e.currentTarget.style.borderColor = tokens.warna.garis_batas)}
                   >
-                    <div>
+                    <div style={{ flex: 1, paddingRight: tokens.spasi.md }}>
                       <div style={{ fontWeight: 600, fontSize: '14px', color: tokens.warna.teks.utama }}>
                         {p.judul}
                       </div>
@@ -191,7 +191,37 @@ export const ModalProyekBaru = ({ daftarProyek, onPilihProyek, onBuatProyek, isO
                         <span>{new Date(p.dibuat_pada).toLocaleDateString('id-ID')}</span>
                       </div>
                     </div>
-                    <ChevronRight size={18} color={tokens.warna.teks.sekunder} />
+                    
+                    <div style={{ display: 'flex', alignItems: 'center', gap: tokens.spasi.sm }}>
+                      {onHapusProyek && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (window.confirm(`Yakin ingin menghapus proyek "${p.judul}"? Semua chat dan diagram akan dihapus permanen.`)) {
+                              onHapusProyek(p.rencana_id);
+                            }
+                          }}
+                          title="Hapus proyek ini"
+                          style={{
+                            background: 'transparent',
+                            border: 'none',
+                            color: tokens.warna.status.bahaya,
+                            cursor: 'pointer',
+                            padding: '6px',
+                            borderRadius: tokens.radius.sm,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}
+                          onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.15)')}
+                          onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      )}
+                      <ChevronRight size={18} color={tokens.warna.teks.sekunder} />
+                    </div>
                   </div>
                 ))}
               </div>

@@ -88,6 +88,7 @@ def detail_rencana(rencana_id: str):
 
     return {
         "rencana": dict(rencana),
+        "ringkasan_ide": rencana["deskripsi"] or "",
         "nodes": nodes,
         "edges": edges,
         "obrolan": obrolan
@@ -157,7 +158,13 @@ def ambil_state_diagram_internal(conn, rencana_id: str) -> Dict[str, Any]:
     cursor.execute("SELECT node_asal_id, node_tujuan_id, label_relasi FROM relasi_diagram WHERE rencana_id = ?;", (rencana_id,))
     relasi_list = [{"dari": r["node_asal_id"], "ke": r["node_tujuan_id"], "label": r["label_relasi"]} for r in cursor.fetchall()]
 
+    # Ambil ringkasan / deskripsi proyek jika ada
+    cursor.execute("SELECT judul, deskripsi FROM rencana WHERE rencana_id = ?;", (rencana_id,))
+    rec_ren = cursor.fetchone()
+    deskripsi_proyek = f"{rec_ren['judul']}: {rec_ren['deskripsi']}" if rec_ren else ""
+
     return {
+        "deskripsi_proyek": deskripsi_proyek,
         "tabel": tabel_list,
         "workflows": usecase_list,
         "relasi": relasi_list
@@ -175,6 +182,8 @@ def ambil_posisi_map_internal(conn, rencana_id: str, posisi_nodes_terkini: Optio
             if dj.get("nama_tabel"):
                 posisi_map[f"erd_{dj['nama_tabel']}"] = {"x": r["posisi_x"], "y": r["posisi_y"]}
                 posisi_map[dj["nama_tabel"]] = {"x": r["posisi_x"], "y": r["posisi_y"]}
+            if dj.get("langkah"):
+                posisi_map[dj["langkah"]] = {"x": r["posisi_x"], "y": r["posisi_y"]}
         except Exception:
             pass
 
@@ -188,11 +197,13 @@ def ambil_posisi_map_internal(conn, rencana_id: str, posisi_nodes_terkini: Optio
                 if d.get("nama_tabel"):
                     posisi_map[f"erd_{d['nama_tabel']}"] = {"x": float(pos.get("x", 0)), "y": float(pos.get("y", 0))}
                     posisi_map[d["nama_tabel"]] = {"x": float(pos.get("x", 0)), "y": float(pos.get("y", 0))}
+                if d.get("langkah"):
+                    posisi_map[d["langkah"]] = {"x": float(pos.get("x", 0)), "y": float(pos.get("y", 0))}
 
     return posisi_map
 
 def simpan_node_dan_edge_internal(conn, rencana_id: str, nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]], waktu: str):
-    """Helper untuk otomatis meng-update node dan relasi di SQLite saat chat masuk"""
+    """Helper untuk otomatis meng-update node dan relasi di SQLite saat chat masuk tanpa duplikasi node_id"""
     cursor = conn.cursor()
     
     # Ambil posisi lama dan warna kustom jika ada, agar pergeseran manual pengguna tidak hilang
@@ -212,8 +223,17 @@ def simpan_node_dan_edge_internal(conn, rencana_id: str, nodes: List[Dict[str, A
     cursor.execute("DELETE FROM node_diagram WHERE rencana_id = ?;", (rencana_id,))
     cursor.execute("DELETE FROM relasi_diagram WHERE rencana_id = ?;", (rencana_id,))
     
-    for node in nodes:
-        node_id = node.get("id") or buat_id_terstruktur("nod")
+    seen_node_ids = set()
+    for idx, node in enumerate(nodes):
+        raw_node_id = str(node.get("id") or "").strip()
+        if not raw_node_id:
+            raw_node_id = buat_id_terstruktur("nod")
+        if raw_node_id in seen_node_ids:
+            node_id = f"{raw_node_id}_{idx+1}"
+        else:
+            node_id = raw_node_id
+        seen_node_ids.add(node_id)
+
         pos = node.get("position", {})
         node_data = node.get("data", {})
 
@@ -222,14 +242,16 @@ def simpan_node_dan_edge_internal(conn, rencana_id: str, nodes: List[Dict[str, A
         if node_id in existing_map and existing_map[node_id].get("warna_kustom") and not node_data.get("warna_kustom"):
             node_data["warna_kustom"] = existing_map[node_id]["warna_kustom"]
 
+        label_node = node_data.get("label") or node_data.get("langkah") or node_data.get("nama_tabel") or "Node"
+
         cursor.execute(
-            """INSERT INTO node_diagram (node_id, rencana_id, tipe_node, label, posisi_x, posisi_y, data_json, dibuat_pada)
+            """INSERT OR REPLACE INTO node_diagram (node_id, rencana_id, tipe_node, label, posisi_x, posisi_y, data_json, dibuat_pada)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?);""",
             (
                 node_id,
                 rencana_id,
                 node.get("type", "default"),
-                node_data.get("label", node_data.get("nama_tabel", "Node")),
+                label_node,
                 pos.get("x", 0.0),
                 pos.get("y", 0.0),
                 json.dumps(node_data),
@@ -237,10 +259,19 @@ def simpan_node_dan_edge_internal(conn, rencana_id: str, nodes: List[Dict[str, A
             )
         )
         
-    for edge in edges:
-        relasi_id = edge.get("id") or buat_id_terstruktur("rel")
+    seen_edge_ids = set()
+    for idx, edge in enumerate(edges):
+        raw_rel_id = str(edge.get("id") or "").strip()
+        if not raw_rel_id:
+            raw_rel_id = buat_id_terstruktur("rel")
+        if raw_rel_id in seen_edge_ids:
+            relasi_id = f"{raw_rel_id}_{idx+1}"
+        else:
+            relasi_id = raw_rel_id
+        seen_edge_ids.add(relasi_id)
+
         cursor.execute(
-            """INSERT INTO relasi_diagram (relasi_id, rencana_id, node_asal_id, node_tujuan_id, label_relasi, tipe_garis, dibuat_pada)
+            """INSERT OR REPLACE INTO relasi_diagram (relasi_id, rencana_id, node_asal_id, node_tujuan_id, label_relasi, tipe_garis, dibuat_pada)
                VALUES (?, ?, ?, ?, ?, ?, ?);""",
             (
                 relasi_id,
@@ -252,6 +283,90 @@ def simpan_node_dan_edge_internal(conn, rencana_id: str, nodes: List[Dict[str, A
                 waktu
             )
         )
+
+def gabungkan_ast_dengan_state_lama(raw_ast: Dict[str, Any], state_diagram_saat_ini: Dict[str, Any], pesan_pengguna: str) -> Dict[str, Any]:
+    """
+    Memastikan state ERD dan Workflow lama tidak hilang saat pengguna mengirim instruksi/chat baru,
+    melakukan merge cerdas dan akumulasi tanpa duplikasi.
+    """
+    if not state_diagram_saat_ini:
+        return raw_ast
+
+    pesan_lower = pesan_pengguna.lower()
+    minta_hapus_semua = "hapus semua" in pesan_lower or "reset diagram" in pesan_lower or "mulai dari awal" in pesan_lower
+
+    if minta_hapus_semua:
+        return raw_ast
+
+    # 1. AKUMULASI TABEL ERD (Pertahankan semua tabel yang sudah dibuat sebelumnya tanpa duplikasi nama)
+    tabel_lama = state_diagram_saat_ini.get("tabel", [])
+    tabel_baru = raw_ast.get("erd_tables", [])
+    
+    # Deteksi tabel spesifik yang diminta dihapus
+    tabel_dihapus = set()
+    for t in tabel_lama:
+        nama_t = str(t.get("nama_tabel", "")).strip().lower()
+        if f"hapus tabel {nama_t}" in pesan_lower or f"drop table {nama_t}" in pesan_lower or f"buang tabel {nama_t}" in pesan_lower:
+            tabel_dihapus.add(nama_t)
+
+    seen_table_names = set()
+    tabel_final = []
+    # Prioritaskan tabel_baru dari LLM terlebih dahulu
+    for t in tabel_baru:
+        nama_t = str(t.get("nama_tabel", "")).strip().lower()
+        if nama_t and nama_t not in seen_table_names and nama_t not in tabel_dihapus:
+            seen_table_names.add(nama_t)
+            tabel_final.append(t)
+    # Tambahkan tabel_lama yang belum ada di tabel_baru
+    for t in tabel_lama:
+        nama_t = str(t.get("nama_tabel", "")).strip().lower()
+        if nama_t and nama_t not in seen_table_names and nama_t not in tabel_dihapus:
+            seen_table_names.add(nama_t)
+            tabel_final.append(t)
+
+    raw_ast["erd_tables"] = tabel_final
+
+    # 2. AKUMULASI WORKFLOWS (Jika AI menghasilkan workflow baru, gunakan yang baru; jika kosong, pertahankan lama)
+    workflows_baru = raw_ast.get("workflows", [])
+    workflows_lama = state_diagram_saat_ini.get("workflows", [])
+    wf_source = workflows_baru if workflows_baru else workflows_lama
+    
+    seen_wf_ids = set()
+    workflows_final = []
+    for idx, wf in enumerate(wf_source):
+        wf_id = str(wf.get("id", f"wf_{idx+1}")).strip()
+        wf_id_lower = wf_id.lower()
+        if wf_id_lower not in seen_wf_ids:
+            seen_wf_ids.add(wf_id_lower)
+            workflows_final.append(wf)
+        else:
+            wf_copy = dict(wf)
+            wf_copy["id"] = f"{wf_id}_{idx+1}"
+            seen_wf_ids.add(wf_copy["id"].lower())
+            workflows_final.append(wf_copy)
+
+    raw_ast["workflows"] = workflows_final
+
+    # 3. AKUMULASI RELASI
+    relasi_baru = raw_ast.get("relasi", [])
+    relasi_lama = state_diagram_saat_ini.get("relasi", [])
+    semua_tabel_set = set([str(t.get("nama_tabel", "")).strip().lower() for t in tabel_final if t.get("nama_tabel")])
+
+    relasi_final_map = {}
+    for r in relasi_lama:
+        dari = str(r.get("dari", "")).strip().lower()
+        ke = str(r.get("ke", "")).strip().lower()
+        if dari in semua_tabel_set and ke in semua_tabel_set:
+            relasi_final_map[f"{dari}->{ke}"] = r
+
+    for r in relasi_baru:
+        dari = str(r.get("dari", "")).strip().lower()
+        ke = str(r.get("ke", "")).strip().lower()
+        relasi_final_map[f"{dari}->{ke}"] = r
+
+    raw_ast["relasi"] = list(relasi_final_map.values())
+
+    return raw_ast
 
 @router.post("/chat/translate-ide")
 def translate_ide_dengan_jev(dto: ChatInputDTO):
@@ -318,14 +433,32 @@ def translate_ide_dengan_jev(dto: ChatInputDTO):
             riwayat_obrolan=riwayat_pesan,
             state_diagram_saat_ini=state_diagram_saat_ini
         )
+        # Gabungkan secara cerdas dengan state ERD & Workflow yang sudah ada
+        raw_ast = gabungkan_ast_dengan_state_lama(raw_ast, state_diagram_saat_ini, dto.pesan)
+        
         is_valid, log_verifikasi, hasil_terstruktur = verifier.verifikasi_dan_eksekusi(raw_ast, posisi_terkini=posisi_map)
+        ringkasan_ide_final = hasil_terstruktur.get("ringkasan_ide", "")
+        
+        payload_simpan = {
+            "mode": "fast",
+            "log_verifikasi": log_verifikasi,
+            "ringkasan_ide": ringkasan_ide_final
+        }
         
         with get_db_connection() as conn:
             cursor = conn.cursor()
+            # 1. Simpan sesi obrolan dengan log verifikasi dan ringkasan ide
             cursor.execute(
                 "INSERT INTO sesi_obrolan (sesi_id, rencana_id, peran, pesan_mentah, hasil_verifikasi_json, dibuat_pada) VALUES (?, ?, ?, ?, ?, ?);",
-                (sesi_id, rencana_id, "pengguna", dto.pesan, json.dumps(log_verifikasi), waktu_skrg)
+                (sesi_id, rencana_id, "pengguna", dto.pesan, json.dumps(payload_simpan), waktu_skrg)
             )
+            # 2. Update deskripsi proyek rencana dengan ringkasan komprehensif terbaru
+            if ringkasan_ide_final:
+                cursor.execute(
+                    "UPDATE rencana SET deskripsi = ?, diperbarui_pada = ? WHERE rencana_id = ?;",
+                    (ringkasan_ide_final, waktu_skrg, rencana_id)
+                )
+            # 3. Simpan node dan edge diagram
             nodes = hasil_terstruktur.get("nodes", [])
             edges = hasil_terstruktur.get("edges", [])
             simpan_node_dan_edge_internal(conn, rencana_id, nodes, edges, waktu_skrg)
@@ -337,6 +470,7 @@ def translate_ide_dengan_jev(dto: ChatInputDTO):
             "mode": "fast",
             "is_valid": is_valid,
             "log_verifikasi": log_verifikasi,
+            "ringkasan_ide": ringkasan_ide_final,
             "hasil_terstruktur": hasil_terstruktur
         }
     except Exception as e:
@@ -423,7 +557,15 @@ def edit_chat_dan_reverifikasi(dto: EditChatDTO):
         riwayat_obrolan=semua_chat[:-1],
         state_diagram_saat_ini=state_diagram_saat_ini
     )
+    raw_ast = gabungkan_ast_dengan_state_lama(raw_ast, state_diagram_saat_ini, dto.pesan_baru)
     is_valid, log_verifikasi, hasil_terstruktur = verifier.verifikasi_dan_eksekusi(raw_ast, posisi_terkini=posisi_map)
+    ringkasan_ide_final = hasil_terstruktur.get("ringkasan_ide", "")
+
+    payload_simpan = {
+        "mode": "fast",
+        "log_verifikasi": log_verifikasi,
+        "ringkasan_ide": ringkasan_ide_final
+    }
 
     with get_db_connection() as conn:
         cursor = conn.cursor()
@@ -431,8 +573,13 @@ def edit_chat_dan_reverifikasi(dto: EditChatDTO):
             """UPDATE sesi_obrolan 
                SET pesan_mentah = ?, hasil_verifikasi_json = ?, dibuat_pada = ?
                WHERE sesi_id = ? AND rencana_id = ?;""",
-            (dto.pesan_baru, json.dumps(log_verifikasi), waktu_skrg, dto.sesi_id, dto.rencana_id)
+            (dto.pesan_baru, json.dumps(payload_simpan), waktu_skrg, dto.sesi_id, dto.rencana_id)
         )
+        if ringkasan_ide_final:
+            cursor.execute(
+                "UPDATE rencana SET deskripsi = ?, diperbarui_pada = ? WHERE rencana_id = ?;",
+                (ringkasan_ide_final, waktu_skrg, dto.rencana_id)
+            )
         nodes = hasil_terstruktur.get("nodes", [])
         edges = hasil_terstruktur.get("edges", [])
         simpan_node_dan_edge_internal(conn, dto.rencana_id, nodes, edges, waktu_skrg)
@@ -444,6 +591,7 @@ def edit_chat_dan_reverifikasi(dto: EditChatDTO):
         "mode": "fast",
         "is_valid": is_valid,
         "log_verifikasi": log_verifikasi,
+        "ringkasan_ide": ringkasan_ide_final,
         "hasil_terstruktur": hasil_terstruktur
     }
 

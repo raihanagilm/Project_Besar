@@ -36,6 +36,33 @@ export default function App() {
   const [riwayatUndo, setRiwayatUndo] = useState([]);
   const [riwayatRedo, setRiwayatRedo] = useState([]);
 
+  // Membuka proyek yang dipilih
+  const pilihProyek = useCallback(async (rencanaId) => {
+    try {
+      const resp = await fetch(`${BACKEND_URL}/rencana/${rencanaId}`);
+      if (resp.ok) {
+        const data = await resp.json();
+        setProyekAktif(data.rencana);
+        setNodes(data.nodes || []);
+        setEdges(data.edges || []);
+        setDaftarObrolan(data.obrolan || []);
+        setRingkasanIde(data.ringkasan_ide || data.rencana?.deskripsi || '');
+        setRiwayatUndo([]);
+        setRiwayatRedo([]);
+        
+        if (data.obrolan && data.obrolan.length > 0) {
+          const obrolanTerakhir = data.obrolan[data.obrolan.length - 1];
+          setLogVerifikasi(obrolanTerakhir.hasil_verifikasi || []);
+        } else {
+          setLogVerifikasi([]);
+        }
+        setIsModalOpen(false);
+      }
+    } catch (err) {
+      console.error('Gagal memuat detail proyek:', err);
+    }
+  }, []);
+
   // Muat daftar proyek saat awal aplikasi dibuka
   const fetchDaftarProyek = useCallback(async () => {
     try {
@@ -52,37 +79,11 @@ export default function App() {
     } catch (err) {
       console.error('Gagal mengambil daftar proyek:', err);
     }
-  }, [proyekAktif]);
+  }, [proyekAktif, pilihProyek]);
 
   useEffect(() => {
     fetchDaftarProyek();
   }, [fetchDaftarProyek]);
-
-  // Membuka proyek yang dipilih
-  const pilihProyek = async (rencanaId) => {
-    try {
-      const resp = await fetch(`${BACKEND_URL}/rencana/${rencanaId}`);
-      if (resp.ok) {
-        const data = await resp.json();
-        setProyekAktif(data.rencana);
-        setNodes(data.nodes || []);
-        setEdges(data.edges || []);
-        setDaftarObrolan(data.obrolan || []);
-        setRiwayatUndo([]);
-        setRiwayatRedo([]);
-        
-        if (data.obrolan && data.obrolan.length > 0) {
-          const obrolanTerakhir = data.obrolan[data.obrolan.length - 1];
-          setLogVerifikasi(obrolanTerakhir.hasil_verifikasi || []);
-        } else {
-          setLogVerifikasi([]);
-        }
-        setIsModalOpen(false);
-      }
-    } catch (err) {
-      console.error('Gagal memuat detail proyek:', err);
-    }
-  };
 
   // Membuat proyek baru
   const handleBuatProyek = async (judul, deskripsi) => {
@@ -124,17 +125,34 @@ export default function App() {
     }
   };
 
+  const nodesRef = useRef(nodes);
+  const edgesRef = useRef(edges);
+  useEffect(() => {
+    nodesRef.current = nodes;
+  }, [nodes]);
+  useEffect(() => {
+    edgesRef.current = edges;
+  }, [edges]);
+
   // Rekam snapshot kanvas untuk Undo
   const catatSnapshot = useCallback(() => {
-    setRiwayatUndo((prev) => [...prev, { nodes, edges }]);
-    setRiwayatRedo([]);
-  }, [nodes, edges]);
+    if (!nodesRef.current || nodesRef.current.length === 0) return;
+    try {
+      const snapNodes = JSON.parse(JSON.stringify(nodesRef.current));
+      const snapEdges = JSON.parse(JSON.stringify(edgesRef.current));
+      setRiwayatUndo((prev) => [...prev.slice(-30), { nodes: snapNodes, edges: snapEdges }]);
+      setRiwayatRedo([]);
+    } catch (err) {
+      console.warn('Gagal mencatat snapshot undo:', err);
+    }
+  }, []);
 
   // Handler Perubahan Posisi Node
   const onNodesChange = useCallback(
     (changes) => {
+      const isDragStart = changes.some((c) => c.type === 'position' && c.dragging === true);
       const isDragStop = changes.some((c) => c.type === 'position' && c.dragging === false);
-      if (isDragStop) {
+      if (isDragStart) {
         catatSnapshot();
       }
       setNodes((nds) => applyNodeChanges(changes, nds));
@@ -157,34 +175,60 @@ export default function App() {
 
   // Aksi Undo
   const handleUndo = useCallback(() => {
-    if (riwayatUndo.length === 0) return;
-    const snapshotSebelumnya = riwayatUndo[riwayatUndo.length - 1];
-    setRiwayatRedo((prev) => [...prev, { nodes, edges }]);
-    setNodes(snapshotSebelumnya.nodes);
-    setEdges(snapshotSebelumnya.edges);
-    setRiwayatUndo((prev) => prev.slice(0, prev.length - 1));
-  }, [riwayatUndo, nodes, edges]);
+    setRiwayatUndo((prevUndo) => {
+      if (prevUndo.length === 0) return prevUndo;
+      const snapshotSebelumnya = prevUndo[prevUndo.length - 1];
+      const newUndo = prevUndo.slice(0, prevUndo.length - 1);
+
+      try {
+        const curNodes = JSON.parse(JSON.stringify(nodesRef.current));
+        const curEdges = JSON.parse(JSON.stringify(edgesRef.current));
+        setRiwayatRedo((prevRedo) => [...prevRedo.slice(-30), { nodes: curNodes, edges: curEdges }]);
+      } catch (e) {
+        // ignore
+      }
+
+      setNodes(snapshotSebelumnya.nodes);
+      setEdges(snapshotSebelumnya.edges);
+      return newUndo;
+    });
+  }, []);
 
   // Aksi Redo
   const handleRedo = useCallback(() => {
-    if (riwayatRedo.length === 0) return;
-    const snapshotBerikutnya = riwayatRedo[riwayatRedo.length - 1];
-    setRiwayatUndo((prev) => [...prev, { nodes, edges }]);
-    setNodes(snapshotBerikutnya.nodes);
-    setEdges(snapshotBerikutnya.edges);
-    setRiwayatRedo((prev) => prev.slice(0, prev.length - 1));
-  }, [riwayatRedo, nodes, edges]);
+    setRiwayatRedo((prevRedo) => {
+      if (prevRedo.length === 0) return prevRedo;
+      const snapshotBerikutnya = prevRedo[prevRedo.length - 1];
+      const newRedo = prevRedo.slice(0, prevRedo.length - 1);
+
+      try {
+        const curNodes = JSON.parse(JSON.stringify(nodesRef.current));
+        const curEdges = JSON.parse(JSON.stringify(edgesRef.current));
+        setRiwayatUndo((prevUndo) => [...prevUndo.slice(-30), { nodes: curNodes, edges: curEdges }]);
+      } catch (e) {
+        // ignore
+      }
+
+      setNodes(snapshotBerikutnya.nodes);
+      setEdges(snapshotBerikutnya.edges);
+      return newRedo;
+    });
+  }, []);
 
   // Keyboard shortcut Undo (Ctrl+Z) dan Redo (Ctrl+Y / Ctrl+Shift+Z)
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+      const isZ = e.key === 'z' || e.key === 'Z';
+      const isY = e.key === 'y' || e.key === 'Y';
+      if ((e.ctrlKey || e.metaKey) && isZ) {
+        e.preventDefault();
         if (e.shiftKey) {
           handleRedo();
         } else {
           handleUndo();
         }
-      } else if ((e.ctrlKey || e.metaKey) && e.key === 'y') {
+      } else if ((e.ctrlKey || e.metaKey) && isY) {
+        e.preventDefault();
         handleRedo();
       }
     };
